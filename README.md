@@ -28,7 +28,7 @@ ffmpeg comes from the `ffmpeg-static` npm package (installed by `npm install`).
 npm start
 ```
 
-Open <http://localhost:5173>. The terminal also prints your Wi-Fi address (e.g. `http://192.168.8.195:5173`).
+Open <http://localhost:5173>. The terminal also prints your Wi-Fi address (e.g. `http://192.168.1.20:5173`).
 
 **Try it without yt-dlp:** `npm run demo`, then paste `demo:Any Long Title (Official Video) | Channel|120`
 (the number is seconds). It generates a test tone so you can try every feature.
