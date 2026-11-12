@@ -72,6 +72,14 @@ Safari will play it but can't jump around in it, so skipping, resuming and the l
 yt-dlp normally fixes that with ffmpeg, which a-Shell doesn't have. Earmark does it instead
 (`public/js/mp4.js`): on import the file is rewritten as a plain MP4 with a normal index. The audio bytes are
 untouched and nothing is re-encoded. Audio saved before this existed is converted once, the next time the app opens.
+
+**Why the player plays a copy.** On an iPhone, audio read straight back out of the app's storage plays, but the
+phone can't jump around in it; the same bytes held in memory work (which is why an audio behaved right after
+being added and broke after the app restarted). So the player never plays the stored file directly
+(`public/js/media.js`): it reads an in-memory copy of the audio that is playing and of the one that plays
+next. It also keeps its own record of where you are, so if the phone restarts or reloads the audio by itself
+(long pause in the background, a call, low memory) it goes back to your place instead of 0:00, and if the
+audio's source dies while the app sleeps it is rebuilt from storage.
 Settings → Downloader switches between **Auto** (server if one answers, otherwise the Shortcut on iPhone),
 **Shortcut** and **Server**. Any audio file can also be imported with the folder button, or dropped on the window.
 

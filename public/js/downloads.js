@@ -3,6 +3,7 @@ import * as api from './api.js';
 import { state, emit, addTrack, getTrack, setInPlaylist, suggestPlaylist } from './store.js';
 import { uid, sleep, sourceOf, extractUrl, mediaKey } from './util.js';
 import { fetchMode, handOff } from './importer.js';
+import { adopt } from './media.js';
 
 export const STAGE_LABEL = {
   sending: 'Sending',
@@ -140,6 +141,7 @@ export async function addLink(raw, { playlistId = null } = {}) {
       },
       blob,
     );
+    adopt(track.id, blob);
     api.deleteJob(job.id);
     job.stage = 'done';
     job.trackId = track.id;

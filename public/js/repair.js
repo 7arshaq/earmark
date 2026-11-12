@@ -5,6 +5,7 @@ import { state, emit, getTrack, saveTrack } from './store.js';
 import * as db from './db.js';
 import { inspect, defragment } from './mp4.js';
 import { shortTitle } from './shorten.js';
+import { adopt, bytesOf } from './media.js';
 
 const CHECKED = 1; // bump to look at every file again
 const MAX_BYTES = 900 * 1048576;
@@ -20,14 +21,15 @@ export async function repairTrack(id, { force = false } = {}) {
   try {
     const blob = state.blobs.get(id) || (await db.get('blobs', id))?.blob;
     if (!blob) return false;
-    const head = inspect(await blob.slice(0, 262144).arrayBuffer());
+    const head = inspect(await bytesOf(blob.slice(0, 262144)));
     let fixed = false;
     if (head.mp4 && head.fragmented && blob.size < MAX_BYTES) {
-      const res = defragment(await blob.arrayBuffer());
+      const res = defragment(await bytesOf(blob));
       if (res) {
         const next = new Blob(res.parts, { type: 'audio/mp4' });
         await db.put('blobs', { id, blob: next });
         state.blobs.set(id, next);
+        adopt(id, next);
         t.size = next.size;
         if (res.duration > 0) t.duration = res.duration;
         fixed = true;

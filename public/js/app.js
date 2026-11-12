@@ -152,7 +152,7 @@ async function boot() {
     .catch(() => {});
   on('player:noseek', async ({ id }) => {
     const fixed = await repairTrack(id, { force: true });
-    if (!fixed) toast('This file can’t be skipped through. Fetch it again to fix that.', { icon: 'info', duration: 6000 });
+    if (!fixed) toast('Couldn’t jump in this audio. Close the app fully and open it again.', { icon: 'info', duration: 6000 });
   });
 }
 

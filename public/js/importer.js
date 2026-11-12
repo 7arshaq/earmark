@@ -6,6 +6,7 @@ import { uid, sourceOf, mediaKey, device } from './util.js';
 import { shortTitle } from './shorten.js';
 import { inspect, defragment } from './mp4.js';
 import { plainTitle } from './repair.js';
+import { adopt } from './media.js';
 
 /** What the Shortcut names files: "Title [Youtube-dQw4w9WgXcQ].m4a", so the link can be rebuilt on import. */
 export const NAME_TEMPLATE = '%(title).80B [%(extractor_key)s-%(id)s].%(ext)s';
@@ -194,6 +195,7 @@ async function importOne(file) {
       },
       blob,
     );
+    adopt(track.id, blob);
     track.cx = 1; // container already checked (see repair.js)
     saveTrack(track, { silent: true });
     dropPending(key);
