@@ -5,6 +5,8 @@ import * as api from './api.js';
 import { initNav, closeTop } from './nav.js';
 import { mountHome, handleResult, runImport } from './ui/home.js';
 import { restorePending, pendingLinks } from './importer.js';
+import { repairLibrary, repairTrack, tidyTitles } from './repair.js';
+import { initFx } from './fx.js';
 import { mountPlayer, openPlayer } from './ui/player-ui.js';
 import { addLink } from './downloads.js';
 import { extractUrl, fmtTime, $ } from './util.js';
@@ -118,6 +120,7 @@ async function boot() {
     toast('Storage is unavailable here (private browsing?). Audio won’t be kept.', { icon: 'info', duration: 8000 });
   }
   await Promise.race([document.fonts?.ready, new Promise((r) => setTimeout(r, 700))]);
+  initFx();
   mountHome($('#home'));
   mountPlayer();
   player.restore();
@@ -141,6 +144,16 @@ async function boot() {
   handleIncoming();
   keyboard();
   registerSW();
+
+  // Saved audio from before this version: clean the names, make every file skippable.
+  tidyTitles().catch(() => {});
+  repairLibrary(state.session.lastId)
+    .then((n) => n && toast(n === 1 ? 'Skipping now works on your saved audio' : `Skipping now works on ${n} saved audios`, { icon: 'check', duration: 4200 }))
+    .catch(() => {});
+  on('player:noseek', async ({ id }) => {
+    const fixed = await repairTrack(id, { force: true });
+    if (!fixed) toast('This file can’t be skipped through. Fetch it again to fix that.', { icon: 'info', duration: 6000 });
+  });
 }
 
 boot();

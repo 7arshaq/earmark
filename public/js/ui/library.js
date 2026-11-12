@@ -3,7 +3,7 @@ import { state, on, query, getPlaylist, updatePlaylist, deletePlaylist, setSetti
 import * as player from '../player.js';
 import { icon, tulip } from '../icons.js';
 import { h, esc, fmtDur, fmtTime, relDay, debounce } from '../util.js';
-import { stagger, swap } from '../anim.js';
+import { stagger, swap, animateList, reveal, setText, setHTML } from '../anim.js';
 import { closeView } from '../views.js';
 import { menu, prompt, confirmSheet, openSheet } from './sheet.js';
 import { trackMenu } from './track-actions.js';
@@ -74,14 +74,23 @@ export function mount(el, opts = {}) {
     if (t.textContent !== title) swap(t, () => (t.textContent = title));
     const list = filter === 'all' ? state.tracks : pl ? playlistTracks(pl.id) : items();
     const dur = list.reduce((n, x) => n + (x.duration || 0), 0);
-    $('#lvSub').textContent = `${list.length} audio${list.length === 1 ? '' : 's'} · ${fmtDur(dur)}`;
-    $('#lvPlMore').hidden = !pl;
+    setText($('#lvSub'), `${list.length} audio${list.length === 1 ? '' : 's'} · ${fmtDur(dur)}`);
+    reveal($('#lvPlMore'), Boolean(pl));
     el.style.setProperty('--accent', pl ? SWATCHES[pl.color % SWATCHES.length].bg : 'transparent');
     el.classList.toggle('is-playlist', Boolean(pl));
   }
 
+  let chipSig = null;
   function renderChips() {
     const chips = [...FILTERS.map(([id, name]) => ({ id, name })), ...state.playlists.map((p) => ({ id: `pl:${p.id}`, name: p.name, color: p.color }))];
+    const sig = chips.map((c) => `${c.id}|${c.name}|${c.color}`).join('\n');
+    if (sig === chipSig) {
+      // Same chips: just move the highlight, so its colour can glide.
+      chipsEl.querySelectorAll('.chip[data-f]').forEach((c) => c.classList.toggle('on', c.dataset.f === filter));
+      chipsEl.querySelector('.chip.on')?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+      return;
+    }
+    chipSig = sig;
     chipsEl.innerHTML =
       chips
         .map(
@@ -122,7 +131,7 @@ export function mount(el, opts = {}) {
         <span class="c-g">${glyph(t)}</span><span class="c-title">${esc(t.title)}</span>${t.favorite ? `<span class="lr-fav">${icon('star-fill')}</span>` : ''}<span class="c-time">${timeLabel(t)}</span>
       </div>`;
     }
-    const meta = [t.source, t.uploader, relDay(t.addedAt)].filter(Boolean).join(' · ');
+    const meta = [relDay(t.addedAt), t.duration ? fmtDur(t.duration, true) : ''].filter(Boolean).join(' · ');
     return `<div class="row ${cur}" data-id="${t.id}" role="button" tabindex="0">
       <span class="r-g">${glyph(t)}</span>
       <span class="r-main">
@@ -146,12 +155,17 @@ export function mount(el, opts = {}) {
           done: ['Nothing finished', 'Finished audio collects here.'],
           loose: ['Everything is sorted', 'Each audio is in a playlist.'],
         }[filter] || ['Empty playlist', 'Use “Playlists” from any audio’s menu to add it here.'];
-    return `<div class="v-empty"><span class="ve-big">${msg[0]}</span><span>${msg[1]}</span></div>`;
+    return `<div class="v-empty" data-id="empty:${esc(msg[0])}"><span class="ve-big">${msg[0]}</span><span>${msg[1]}</span></div>`;
   }
 
+  /** animate: true = a new set of rows (cascade in); false = the same list changed (rows glide / fade). */
   function renderList(animate = false) {
+    if (animate) return paintList(true);
+    animateList(listEl, () => paintList(false));
+  }
+  function paintList(animate) {
     const list = items();
-    $('#lvCount').textContent = search ? `${list.length} found` : '';
+    setText($('#lvCount'), search ? `${list.length} found` : '');
     $('#lvPlayAll').disabled = !list.length;
     listEl.className = `lv-${mode}`;
     listEl.innerHTML = list.length ? list.map(rowHTML).join('') : emptyHTML();
@@ -163,9 +177,7 @@ export function mount(el, opts = {}) {
       const t = state.byId.get(r.dataset.id);
       if (!t) return;
       r.classList.toggle('is-current', player.P.id === t.id);
-      const g = r.querySelector('.r-g, .lt-g, .c-g');
-      const html = glyph(t);
-      if (g && g.innerHTML !== html) g.innerHTML = html;
+      setHTML(r.querySelector('.r-g, .lt-g, .c-g'), glyph(t));
     });
   }
 

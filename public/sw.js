@@ -1,6 +1,6 @@
 // Offline shell. Network-first (fresh when online, instant fallback when not).
 // Audio never goes through here — it lives in IndexedDB.
-const VERSION = 'earmark-v3';
+const VERSION = 'earmark-v4'; // keep in step with BUILD in js/util.js
 // Paths are relative so the app works at the site root or in a sub-folder (e.g. GitHub Pages).
 const ROOT = new URL('./', self.location).href;
 const SHELL = [
@@ -37,6 +37,9 @@ const SHELL = [
   'js/ui/track-actions.js',
   'js/shorten.js',
   'js/importer.js',
+  'js/mp4.js',
+  'js/repair.js',
+  'js/fx.js',
 ];
 
 self.addEventListener('install', (e) => {
@@ -69,7 +72,9 @@ self.addEventListener('fetch', (e) => {
       const cache = await caches.open(VERSION);
       const key = isNav ? ROOT : req;
       // Network first, but never let a slow/absent server stall the app.
-      const net = fetch(req).then((res) => {
+      // Files are re-checked with the host every time ("no-cache"), so an update always
+      // arrives whole — never half new code, half the browser's ten-minute-old copies.
+      const net = fetch(isNav ? req : new Request(req, { cache: 'no-cache' })).then((res) => {
         if (res.ok && res.type === 'basic') cache.put(key, res.clone()).catch(() => {});
         return res;
       });

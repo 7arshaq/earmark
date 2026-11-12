@@ -66,6 +66,12 @@ Without a server, the iPhone does the downloading itself:
    tap **Import** and pick the file.
 
 Files are named `Title [Youtube-ID].m4a`, so Import gets back the short title and the original link.
+
+**Why Import rewraps the file.** Audio taken straight from YouTube or X is a *fragmented* MP4 (DASH/HLS):
+Safari will play it but can't jump around in it, so skipping, resuming and the lock-screen buttons do nothing.
+yt-dlp normally fixes that with ffmpeg, which a-Shell doesn't have. Earmark does it instead
+(`public/js/mp4.js`): on import the file is rewritten as a plain MP4 with a normal index. The audio bytes are
+untouched and nothing is re-encoded. Audio saved before this existed is converted once, the next time the app opens.
 Settings → Downloader switches between **Auto** (server if one answers, otherwise the Shortcut on iPhone),
 **Shortcut** and **Server**. Any audio file can also be imported with the folder button, or dropped on the window.
 
@@ -77,11 +83,13 @@ The YouTube part relies on a community plugin for a-Shell; if YouTube stops work
 - Short, calm titles generated from noisy video titles (`lib/shorten.mjs`); rename any time.
 - Playlists without friction: one-tap chips after saving, and **auto-filing** — a new video from a channel goes into the playlist that channel usually lives in (with Undo).
 - **Continue** tile resumes exactly where you stopped; every audio remembers its position.
-- Player: skip back/forward (3–30 s, set in Settings), next/previous, **play next** & queue (drag to reorder), speed 0.5–3× (pitch kept), volume, **sleep timer** dial (5–60 min, end of audio, 90 min, 2 h, gentle fade), favourites, share (link, link at the current time, the MP3 itself).
+- Player, laid out for one hand: name at the top, your marks / notes / queue under it, speed · sleep · mark · share in the middle, the timeline and the transport buttons at the bottom. Skip back/forward (3–30 s, set in Settings), next/previous, **play next** & queue (drag to reorder), speed 0.5–3× (pitch kept), **sleep timer** dial (5–60 min, end of audio, 90 min, 2 h), favourites, share (link, link at the current time, the audio itself). Pull the player down from anywhere to put it away.
+- On phones the four sections (Library · Favourites · Marks · Settings) are a row under the mini player. Each button has the colour of the view it opens, and the view grows out of it; tap the lit one to go back.
 - **Bookmarks** with names and colours, shown on the timeline; **notes** with optional timestamps; a Marks view across everything.
 - Library views: **list, tiles, compact**; filters, search, sort.
 - Collapsible player (mini bar ↔ full sheet — swipe or tap), plus a **focus view** with just the time and big controls.
-- Lock screen / notification / headphone / car controls via Media Session, with on-theme artwork generated per audio.
+- Lock screen / notification / headphone / car controls via Media Session, with on-theme artwork generated per audio. An iPhone shows one pair of buttons beside play: skip (your own seconds) or previous/next, chosen in Settings → Playback.
+- Sound effects: soft, low clicks synthesized on the spot (no audio files); switch them off in Settings → Playback.
 - Listening stats (this week vs last week), storage overview, offline shell.
 - Keyboard (desktop): Space play/pause · ←/→ skip · Shift+→ next · M mark · F favourite · P open player · Esc back.
 
@@ -104,9 +112,11 @@ PowerShell example: `$env:ACCESS_KEY="pick-something-long"; npm start`
 
 ## Good to know
 
-- **iPhone volume:** iOS doesn't let web apps change volume, so the slider is hidden there — use the side buttons. The sleep fade also only works where volume can be set (Android / desktop).
+- **Volume:** phones have buttons for it (and iOS doesn't let web apps change it at all), so the slider only shows with a mouse. The sleep fade likewise only works where volume can be set (Android / desktop).
+- **Skipping doesn't work on one file?** Settings → About → *Copy player report* copies what the phone's player says about it (seekable ranges, file type, build number).
+- **Updates:** the build number is in Settings → About. The installed app picks up a new version the next time it is opened with a connection; close it fully and reopen if it still shows the old number.
 - **Background playback** works for the installed app on iOS and Android. Close the app from the app switcher and playback stops (that's the OS).
-- Audio is MP3 (64 / 128 / 192 kbps — Settings → Downloads). A 1-hour talk at 128 kbps is about 55 MB.
+- With the server, audio is MP3 (64 / 128 / 192 kbps — Settings → Downloads); with the iPhone Shortcut it is M4A (AAC) as the site provides it. A 1-hour talk is about 55–65 MB either way.
 - Only download things you have the right to keep, and respect each site's terms.
 
 ## Project layout
@@ -119,6 +129,8 @@ scripts/icons.mjs       renders the app icons (npm run icons)
 public/index.html       app shell
 public/css/app.css      design system, layouts, motion
 public/js/              app.js (boot) · store/db (state + IndexedDB) · player (audio engine,
-                        media session, sleep, queue) · downloads/api · anim (motion helpers) · ui/*
+                        media session, sleep, queue) · downloads/api · importer (files + Shortcut
+                        hand-off) · mp4 + repair (make fragmented audio skippable) · anim (motion
+                        helpers) · fx (sounds + tap animations) · ui/*
 public/sw.js            offline shell
 ```

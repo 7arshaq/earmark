@@ -13,12 +13,16 @@ export function initNav() {
   });
 }
 
-/** Register an open layer. Returns a function that closes it (via history). */
+/**
+ * Register an open layer. Returns a function that closes it (via history).
+ * The function carries its `layer`, so whoever owns it can hand the slot to something else
+ * (a tab swap) by replacing `layer.close`.
+ */
 export function pushLayer(close, name = '') {
   const layer = { close, name };
   stack.push(layer);
   history.pushState({ em: stack.length }, '');
-  return () => {
+  const closer = () => {
     const i = stack.indexOf(layer);
     if (i === -1) return;
     if (i === stack.length - 1) history.back();
@@ -27,6 +31,8 @@ export function pushLayer(close, name = '') {
       layer.close();
     }
   };
+  closer.layer = layer;
+  return closer;
 }
 
 export const topLayer = () => stack[stack.length - 1]?.name || null;

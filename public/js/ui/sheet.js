@@ -3,6 +3,7 @@ import { h, esc, device } from '../util.js';
 import { icon } from '../icons.js';
 import { pushLayer } from '../nav.js';
 import { dragDismiss } from '../anim.js';
+import { sfx } from '../fx.js';
 
 const wide = () => !device.coarse && innerWidth >= 700;
 
@@ -32,19 +33,21 @@ export function openSheet({ title = '', body = '', className = '', onClose, onOp
       scrim.remove();
       el.remove();
     }, 420);
+    sfx('close');
     onClose?.();
     if (opener && opener.isConnected && !device.coarse) opener.focus?.({ preventScroll: true });
   };
   const close = pushLayer(finish, 'sheet');
+  sfx('open');
 
   scrim.addEventListener('click', close);
   el.querySelector('.sheet-x')?.addEventListener('click', close);
+  // Pull it down from anywhere (a scrolled list inside still scrolls first).
   dragDismiss(el, {
-    handle: el.querySelector('.sheet-grab'),
+    mouseHandle: el.querySelector('.sheet-grab'),
     onDismiss: close,
+    canStart: (e) => !e.target.closest('input, textarea, select, .dial, .scrub'),
   });
-  const head = el.querySelector('.sheet-head');
-  if (head && device.coarse) dragDismiss(el, { handle: head, onDismiss: close, canStart: (e) => !e.target.closest('button') });
 
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {

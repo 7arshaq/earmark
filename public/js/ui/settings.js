@@ -3,14 +3,15 @@ import { state, on, emit, setSetting, deleteTrack } from '../store.js';
 import * as player from '../player.js';
 import * as api from '../api.js';
 import { icon, tulip } from '../icons.js';
-import { h, esc, device, fmtBytes, haptic } from '../util.js';
-import { Roller, stagger, swap } from '../anim.js';
+import { h, esc, device, fmtBytes, haptic, BUILD } from '../util.js';
+import { Roller, stagger, swap, reveal } from '../anim.js';
+import { sfx } from '../fx.js';
 import { closeView } from '../views.js';
 import { confirmSheet } from './sheet.js';
 import { toast } from './toast.js';
 import { fetchMode, NAME_TEMPLATE } from '../importer.js';
 
-export const tone = 'tone-paper';
+export const tone = 'tone-navy';
 
 const GUIDES = {
   ios: {
@@ -106,6 +107,16 @@ export function mount(el) {
         <h3 class="tile-h">Playback</h3>
         <label class="row-toggle"><span><b>Autoplay next</b><small>Keep going through the list when one ends</small></span><span class="switch"><input type="checkbox" data-k="autoplay" ${s.autoplay ? 'checked' : ''}><i></i></span></label>
         ${player.P.volumeSupported ? `<label class="row-toggle"><span><b>Fade out on sleep</b><small>Volume eases down in the last 30 seconds</small></span><span class="switch"><input type="checkbox" data-k="sleepFade" ${s.sleepFade ? 'checked' : ''}><i></i></span></label>` : ''}
+        <label class="row-toggle"><span><b>Sound effects</b><small>Soft clicks when you tap things</small></span><span class="switch"><input type="checkbox" data-k="sfx" ${s.sfx ? 'checked' : ''}><i></i></span></label>
+        ${
+          os === 'ios'
+            ? `<div class="row-toggle col"><span><b>Lock screen buttons</b><small>An iPhone shows one pair beside play. Skips use your seconds from above.</small></span>
+          <div class="seg full" id="lockSeg"><i class="seg-pill" aria-hidden="true"></i>
+            <button type="button" data-l="skip">${icon('back')} Skip</button>
+            <button type="button" data-l="tracks">${icon('next')} Prev / Next</button>
+          </div></div>`
+            : ''
+        }
         <div class="row-toggle"><span><b>Speed</b><small>Applies to everything you play</small></span><span class="speed-pills" id="speedPills">${[1, 1.25, 1.5, 2].map((v) => `<button type="button" class="chip sm press ${s.speed === v ? 'on' : ''}" data-v="${v}">${v}×</button>`).join('')}</span></div>
       </section>
 
@@ -158,7 +169,11 @@ export function mount(el) {
       <section class="set-card tone-ink about" data-stagger>
         <h3 class="tile-h">Earmark</h3>
         <p class="set-hint">Paste a link, keep the audio, listen like a podcast. Your library, marks and notes live only on this device.</p>
-        <p class="set-hint dim">Keys: Space play/pause · ← → skip · Shift → next · M mark · F favourite</p>
+        ${os === 'desktop' ? '<p class="set-hint dim">Keys: Space play/pause · ← → skip · Shift → next · M mark · F favourite</p>' : ''}
+        <div class="btn-row">
+          <button class="btn ghost sm press" type="button" id="copyReport">${icon('clip')}<span>Copy player report</span></button>
+          <span class="build">Build ${BUILD}</span>
+        </div>
       </section>
     </div></div>`;
 
@@ -187,7 +202,8 @@ export function mount(el) {
   /* toggles */
   el.addEventListener('change', (e) => {
     const k = e.target.dataset?.k;
-    if (k) setSetting(k, e.target.checked);
+    if (!k) return;
+    setSetting(k, e.target.checked).then(() => k === 'sfx' && e.target.checked && sfx('on'));
   });
   q('#speedPills').addEventListener('click', (e) => {
     const c = e.target.closest('.chip');
@@ -211,6 +227,27 @@ export function mount(el) {
     if (!b) return;
     setSetting('quality', b.dataset.q);
     placeSeg(qual, b);
+  });
+
+  /* lock-screen buttons (iPhone) */
+  const lock = q('#lockSeg');
+  lock?.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-l]');
+    if (!b) return;
+    setSetting('lockButtons', b.dataset.l);
+    placeSeg(lock, b);
+  });
+
+  /* troubleshooting snapshot */
+  q('#copyReport').addEventListener('click', async () => {
+    const text = `Earmark build ${BUILD} · ${navigator.userAgent}\n${player.report()}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Report copied. Paste it in a message.', { icon: 'check', duration: 2600 });
+    } catch {
+      const { openSheet } = await import('./sheet.js');
+      openSheet({ title: 'Player report', body: h(`<pre class="report">${esc(text)}</pre>`) });
+    }
   });
 
   /* install guide */
@@ -247,7 +284,7 @@ export function mount(el) {
     swap(stepsEl, () => renderSteps(true));
   });
   const instNow = q('#instNow');
-  const showInstall = () => (instNow.hidden = !window.__installPrompt || device.standalone);
+  const showInstall = () => reveal(instNow, Boolean(window.__installPrompt) && !device.standalone);
   instNow.addEventListener('click', async () => {
     const p = window.__installPrompt;
     if (!p) return;
@@ -272,7 +309,7 @@ export function mount(el) {
     } catch {}
     q('#stBar').style.transform = `scaleX(${quota ? Math.min(1, Math.max(0.01, mine / quota)) : 0.01})`;
     q('#stHint').textContent = `${state.tracks.length} audio${state.tracks.length === 1 ? '' : 's'}${quota ? ` · about ${fmtBytes(Math.max(0, quota - mine))} free for the app` : ''}${persisted ? ' · protected from cleanup' : ''}`;
-    q('#stPersist').hidden = persisted || !navigator.storage?.persist;
+    reveal(q('#stPersist'), !persisted && Boolean(navigator.storage?.persist));
   }
   q('#stPersist').addEventListener('click', async () => {
     const ok = await navigator.storage.persist().catch(() => false);
@@ -354,12 +391,18 @@ export function mount(el) {
   function renderServer() {
     const sv = state.server;
     const ok = sv.online && (sv.ytdlp || sv.demo) && (!sv.locked || sv.authorized);
-    q('#srvStatus').innerHTML =
+    const html =
       sv.online === null
         ? `<i class="dot"></i>Checking…`
         : sv.online
           ? `<i class="dot ${ok ? 'ok' : 'warn'}"></i>${ok ? 'Connected' : sv.locked && !sv.authorized ? 'Needs the access key' : 'Connected, but yt-dlp is missing'}<small>${sv.ytdlp ? `yt-dlp ${esc(sv.ytdlp)}` : sv.demo ? 'demo mode' : 'run: npm run setup'}${sv.ffmpeg ? ' · ffmpeg ✓' : ''}</small>`
-          : `<i class="dot bad"></i>Can't reach the server<small>Listening works offline — fetching needs the server.</small>`;
+          : `<i class="dot bad"></i>Can't reach the server<small>Listening works offline. Fetching needs the server.</small>`;
+    const box = q('#srvStatus');
+    if (box.dataset.sig === html) return;
+    const first = !box.dataset.sig;
+    box.dataset.sig = html;
+    if (first) box.innerHTML = html;
+    else swap(box, () => (box.innerHTML = html));
   }
   const saveSrv = async () => {
     await setSetting('server', q('#srvUrl').value.trim());
@@ -393,6 +436,7 @@ export function mount(el) {
     placeSeg(qual, qual.querySelector(`[data-q="${s.quality}"]`) || qual.querySelector('[data-q="standard"]'), false);
     placeSeg(tabs, tabs.querySelector(`[data-g="${guide}"]`), false);
     placeSeg(via, via.querySelector(`[data-via="${s.fetchVia || 'auto'}"]`), false);
+    if (lock) placeSeg(lock, lock.querySelector(`[data-l="${s.lockButtons === 'tracks' ? 'tracks' : 'skip'}"]`), false);
   });
 
   return {

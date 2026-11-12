@@ -11,8 +11,19 @@ export const SWATCHES = [
   { key: 'silver', bg: '#b9b9b4', ink: '#111111', dim: '#8e8e89' },
   { key: 'stone', bg: '#575757', ink: '#eeeeee', dim: '#3f3f3f' },
   { key: 'paper', bg: '#e7e7e4', ink: '#111111', dim: '#b8b8b3' },
+  { key: 'navy', bg: '#132146', ink: '#e8ecf6', dim: '#0b1530' },
+  { key: 'denim', bg: '#5d79b3', ink: '#0c1322', dim: '#42598a' },
+  { key: 'pine', bg: '#2f5f58', ink: '#e9f1ee', dim: '#1f423d' },
+  { key: 'ochre', bg: '#d9a53f', ink: '#151005', dim: '#a87b24' },
+  { key: 'plum', bg: '#643349', ink: '#f4e9ee', dim: '#472233' },
 ];
-export const MARK_COLORS = ['#f5841f', '#c3af87', '#7e8a6e', '#b2705a', '#e7e7e4', '#0e0e0e'];
+/** The order new audio picks its colour in: warm, cool, earthy in turn, so a library never
+ *  sits in one corner of the palette. (Stored colours are indexes into SWATCHES.) */
+const COLOUR_ORDER = [0, 7, 1, 10, 9, 3, 8, 2, 11, 4, 6, 5];
+export const nextColour = (n) => COLOUR_ORDER[n % COLOUR_ORDER.length];
+/** Soft fill for controls sitting on a swatch: darkens light tiles, lightens dark ones. */
+export const swatchSoft = (sw) => (/^#[ef]/i.test(sw.ink) ? 'rgba(255, 255, 255, 0.14)' : 'rgba(0, 0, 0, 0.12)');
+export const MARK_COLORS = ['#f5841f', '#c3af87', '#7e8a6e', '#b2705a', '#5d79b3', '#e7e7e4'];
 
 export const DEFAULTS = {
   skipBack: 5,
@@ -31,6 +42,8 @@ export const DEFAULTS = {
   accessKey: '',
   volume: 1,
   haptics: true,
+  sfx: true,
+  lockButtons: 'skip',
 };
 
 export const state = {
@@ -117,7 +130,7 @@ export async function addTrack(fields, blob) {
     playlists: fields.playlists || [],
     marks: [],
     notes: [],
-    color: state.tracks.length % SWATCHES.length,
+    color: nextColour(state.tracks.length),
     plays: 0,
   };
   await db.put('blobs', { id, blob });
@@ -151,7 +164,7 @@ export const getPlaylist = (id) => state.playlists.find((p) => p.id === id) || n
 
 export async function createPlaylist(name) {
   const used = new Set(state.playlists.map((p) => p.color));
-  const color = [0, 2, 1, 3, 4, 6, 5].find((c) => !used.has(c)) ?? state.playlists.length % SWATCHES.length;
+  const color = COLOUR_ORDER.find((c) => !used.has(c)) ?? state.playlists.length % SWATCHES.length;
   const p = { id: uid(), name: name.trim().slice(0, 40) || 'Playlist', color, createdAt: Date.now(), updatedAt: Date.now() };
   state.playlists.push(p);
   await db.put('playlists', p);

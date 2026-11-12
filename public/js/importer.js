@@ -1,9 +1,11 @@
 // No-server path: links go to an iPhone Shortcut that downloads them on the phone,
 // and the files come back in through Import. Also handles any audio file you pick or drop.
 import * as db from './db.js';
-import { state, emit, addTrack, setInPlaylist, suggestPlaylist } from './store.js';
+import { state, emit, addTrack, saveTrack, setInPlaylist, suggestPlaylist } from './store.js';
 import { uid, sourceOf, mediaKey, device } from './util.js';
 import { shortTitle } from './shorten.js';
+import { inspect, defragment } from './mp4.js';
+import { plainTitle } from './repair.js';
 
 /** What the Shortcut names files: "Title [Youtube-dQw4w9WgXcQ].m4a", so the link can be rebuilt on import. */
 export const NAME_TEMPLATE = '%(title).80B [%(extractor_key)s-%(id)s].%(ext)s';
@@ -89,7 +91,7 @@ export function parseName(name) {
     url = `https://www.youtube.com/watch?v=${plain[1]}`;
     key = `yt:${plain[1]}`;
   }
-  title = title.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+  title = plainTitle(title).replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
   return { title, url, key, extractor };
 }
 
@@ -156,12 +158,25 @@ async function importOne(file) {
 
   try {
     const ext = (file.name.match(/\.(\w+)$/)?.[1] || '').toLowerCase();
-    const type = file.type && file.type !== 'video/mp4' ? file.type : TYPES[ext] || 'audio/mpeg';
+    let type = file.type && file.type !== 'video/mp4' ? file.type : TYPES[ext] || 'audio/mpeg';
     // Copy the bytes: a picked file can be a temporary iOS file that disappears later.
-    const blob = new Blob([await file.arrayBuffer()], { type });
-    job.progress = 0.55;
+    const bytes = await file.arrayBuffer();
+    job.progress = 0.5;
     touch(job);
-    const duration = await probeDuration(blob);
+    // Audio straight from YouTube / X comes in a container Safari can play but not skip
+    // through. Rewrap it here (same sound, new index) so skipping and resuming just work.
+    let parts = [bytes];
+    let duration = 0;
+    const plain = defragment(bytes);
+    if (plain) {
+      parts = plain.parts;
+      type = 'audio/mp4';
+      duration = plain.duration;
+    } else duration = inspect(bytes).duration || 0;
+    const blob = new Blob(parts, { type });
+    job.progress = 0.7;
+    touch(job);
+    if (!duration) duration = await probeDuration(blob);
     job.progress = 0.85;
     job.meta.duration = duration;
     touch(job);
@@ -179,6 +194,8 @@ async function importOne(file) {
       },
       blob,
     );
+    track.cx = 1; // container already checked (see repair.js)
+    saveTrack(track, { silent: true });
     dropPending(key);
     job.stage = 'done';
     job.progress = 1;

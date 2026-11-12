@@ -1012,3 +1012,186 @@ textarea.field { height: auto; padding: 12px 14px; line-height: 1.4; resize: non
   .player, .player.open, .sheet, .sheet.open, .mini, .mini-wrap { transition-property: opacity, visibility !important; }
   .press:active { transform: none; }
 }
+
+
+/* ═══════════════ v2: safe areas, nav row, player order, navy ═══════════════ */
+:root {
+  --navy: #132146;
+  --navy-2: #0b1530;
+  --navy-3: #26386b;
+  --denim: #5d79b3;
+  --sat: env(safe-area-inset-top, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  /* Everything lives inside these edges: below the status bar / island, above the home bar. */
+  --edge-t: max(var(--pad), calc(var(--sat) + 2px));
+  --edge-b: max(var(--pad), calc(var(--sab) - 12px));
+  --edge-l: calc(var(--sal) + var(--pad));
+  --edge-r: calc(var(--sar) + var(--pad));
+  --nav-h: 64px;
+}
+.tone-navy { --t-bg: var(--navy); --t-ink: #e8ecf6; --t-soft: rgba(255, 255, 255, 0.1); }
+
+.app {
+  padding: var(--edge-t) var(--edge-r) var(--edge-b) var(--edge-l);
+  transform-origin: 50% 30%;
+  transition: transform 580ms var(--ease-drawer), opacity 420ms var(--ease-out);
+}
+/* The home screen steps back and fades while the player is up (the nav row goes with it). */
+.player-open .app { transform: scale(0.94); opacity: 0.5; }
+
+/* phones: the sections row sits under the mini player, not in the bento */
+@media (max-width: 639px), (max-width: 719px) and (min-height: 521px) {
+  .bento {
+    grid-template-rows: minmax(146px, 0.9fr) minmax(124px, 0.82fr) minmax(200px, 2.7fr);
+    grid-template-areas: 'paste paste arrow' 'cont cont ins' 'lib lib lib';
+  }
+  .t-quick { display: none; }
+}
+@media (max-width: 639px) and (max-height: 740px), (max-width: 719px) and (min-height: 521px) and (max-height: 740px) {
+  .bento { grid-template-rows: minmax(124px, 0.9fr) minmax(104px, 0.8fr) minmax(150px, 2.7fr); }
+}
+.t-quick { min-width: 0; min-height: 0; padding: 0; gap: var(--gap); background: transparent; }
+.tabbar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; flex: none; height: 56px; margin-top: var(--gap); }
+@media (min-width: 720px), (min-width: 640px) and (max-height: 520px) {
+  :root { --nav-h: 0px; }
+  .tabbar { display: none; }
+}
+/* Each section button wears the colour of the view it opens. */
+.nav-btn {
+  position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  min-width: 0; padding: 0; border: 0; border-radius: var(--r); background: var(--t-bg); color: var(--t-ink);
+  transition: transform 160ms var(--ease-out), box-shadow 320ms var(--ease-out);
+}
+.nav-btn .ic { width: 21px; height: 21px; }
+.nav-btn span { position: static; font-size: 10.5px; font-weight: 650; opacity: 0.8; }
+.nav-btn.on { box-shadow: inset 0 0 0 2.5px rgba(255, 255, 255, 0.62); }
+
+/* the travelling surface + shadow while a view grows out of its button */
+.xp-surf { position: fixed; inset: 0; pointer-events: none; }
+.xp-shadow { position: fixed; pointer-events: none; border-radius: var(--r); box-shadow: 0 26px 64px rgba(0, 0, 0, 0.5), 0 6px 16px rgba(0, 0, 0, 0.32); transform-origin: 0 0; }
+
+/* views: the scrolling part has its own rounded window, so nothing is ever cut square */
+.overlay { padding-bottom: 10px; }
+.v-body { margin: 0 10px; padding: 4px 0 12px; border-radius: var(--r); }
+
+/* ── player: inside the safe area, rounded window, transport under the thumb ── */
+.player { padding: 0; box-shadow: 0 -22px 60px rgba(0, 0, 0, 0.5); }
+.pl-scroll { inset: var(--edge-t) var(--edge-r) var(--edge-b) var(--edge-l); border-radius: var(--r); }
+.pl-grid { padding: 0; }
+@media (max-width: 899px) {
+  .player { border-radius: 18px 18px 0 0; }
+  .pl-grid { grid-template-rows: auto auto minmax(168px, 1fr) auto auto auto auto; grid-template-areas: 'head' 'title' 'panel' 'vol' 'acts' 'time' 'ctl'; }
+  .player.no-vol:not(.focus) .pl-grid { grid-template-rows: auto auto minmax(168px, 1fr) auto auto auto; grid-template-areas: 'head' 'title' 'panel' 'acts' 'time' 'ctl'; }
+}
+@media (min-width: 900px) {
+  .pl-grid { grid-template-rows: auto auto minmax(150px, 1fr) auto auto auto; grid-template-areas: 'head panel' 'title panel' 'time panel' 'acts panel' 'vol panel' 'ctl panel'; }
+  .player.no-vol:not(.focus) .pl-grid { grid-template-rows: auto auto minmax(150px, 1fr) auto auto; grid-template-areas: 'head panel' 'title panel' 'time panel' 'acts panel' 'ctl panel'; }
+}
+.pl-head { height: 50px; padding: 4px 0 0; }
+.pl-head .grab { top: 0; }
+.pl-title { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'chips fav' 'name name'; align-items: center; gap: 8px 10px; padding: 12px 12px 14px 14px; }
+.pt-chips { grid-area: chips; flex-wrap: nowrap; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.pt-chips::-webkit-scrollbar { display: none; }
+.pt-fav { grid-area: fav; margin: 0; }
+.pt-name { grid-area: name; font-size: clamp(24px, 6.4vw, 44px); line-height: 1.03; -webkit-line-clamp: 2; }
+.panel-body { flex: 1 1 0px; border-radius: calc(var(--r) - 3px); }
+.act { height: clamp(64px, 9.4vh, 100px); }
+
+/* marks: swatch lines up with the icon above it, every row is its own rounded strip */
+.add-row { gap: 11px; padding: 0 12px 0 14px; }
+.mk { grid-template-columns: 26px minmax(0, 1fr) auto 32px; gap: 8px; min-height: 48px; margin-top: 6px; padding: 0 4px 0 11px; border-bottom: 0; border-radius: calc(var(--r) - 3px); background: rgba(255, 255, 255, 0.32); }
+.mk .mk-dot { width: 22px; height: 22px; justify-self: center; border-radius: 6px; }
+.mk-name { padding: 10px 0; }
+
+/* icon pairs crossfade instead of blinking */
+.pl-head [data-a='focus'] .ic, .pl-vol [data-a='mute'] .ic { grid-area: 1 / 1; transition: opacity 220ms var(--ease-out), transform 320ms var(--ease-out); }
+.pl-head svg.f-b, .player.focus .pl-head svg.f-a, .pl-vol .v-b, .pl-vol.muted .v-a { display: block; opacity: 0; transform: scale(0.6) rotate(-30deg); }
+.player.focus .pl-head svg.f-b, .pl-vol.muted .v-b { display: block; opacity: 1; transform: none; }
+
+/* Paste ↔ Clear trade places with a fade */
+.pc-swap { display: grid; }
+.pc-swap > * { grid-area: 1 / 1; justify-self: end; transition: opacity 180ms var(--ease-out), transform 240ms var(--ease-out), background-color 200ms; }
+.pc-clear, .has-text .pc-clear { display: inline-flex; }
+.pc-clear { opacity: 0; transform: scale(0.7); pointer-events: none; }
+.has-text .pc-clear { opacity: 1; transform: none; pointer-events: auto; }
+.has-text #pasteBtn { display: inline-flex; opacity: 0; transform: scale(0.9); pointer-events: none; }
+
+/* toasts stay clear of the nav row; in the player they come from the top, away from the controls */
+.toasts { bottom: calc(var(--edge-b) + var(--nav-h) + 10px); }
+.has-mini .toasts { bottom: calc(var(--edge-b) + var(--nav-h) + 86px); }
+.player-open .toasts { top: calc(var(--edge-t) + 58px); bottom: auto; }
+.player-open .toast { transform: translateY(-18px) scale(0.98); }
+.player-open .toast.in { transform: none; }
+
+/* ═══════════════ v2 details ═══════════════ */
+/* controls that sit on a track's colour adapt to light and dark swatches */
+.pl-title .chip, .pt-fav { background: var(--sw-soft, rgba(0, 0, 0, 0.12)); }
+.pl-title .chip.ghost { background: transparent; }
+
+/* state changes glide */
+.r-title, .lr-title, .c-title, .recv-title, .ct-title { transition: color 260ms var(--ease-out), opacity 260ms var(--ease-out); }
+.row, .crow, .lrow { transition: background-color 240ms var(--ease-out), transform 160ms var(--ease-out); }
+.ltile { transition: box-shadow 260ms var(--ease-out), transform 160ms var(--ease-out); }
+.q-list.auto { transition: opacity 300ms var(--ease-out); }
+.mk.fresh { animation: rowFlash 1400ms var(--ease-out); }
+@keyframes rowFlash { 0% { background-color: rgba(255, 255, 255, 0.85); } 100% { background-color: rgba(255, 255, 255, 0.32); } }
+
+/* scrolling areas: slim, quiet bars on computers; none on phones */
+.v-body, .panel-body, .sheet-body { scrollbar-width: thin; scrollbar-color: rgba(128, 128, 128, 0.45) transparent; }
+@media (pointer: coarse) { .v-body, .panel-body, .sheet-body { scrollbar-width: none; } .v-body::-webkit-scrollbar, .panel-body::-webkit-scrollbar, .sheet-body::-webkit-scrollbar { display: none; } }
+
+/* settings extras */
+.build { margin-left: auto; align-self: center; font-size: 12px; font-weight: 600; opacity: 0.5; font-variant-numeric: tabular-nums; }
+.report { margin: 0; padding: 12px; border-radius: 10px; background: rgba(0, 0, 0, 0.07); font: 500 12px/1.5 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+.tone-navy .back-btn { background: rgba(255, 255, 255, 0.12); }
+
+/* navy in the night-time corners of the app */
+.dial-center { background: var(--navy); }
+.t-donut[data-mode='time'] .dn-track, .t-donut[data-mode='end'] .dn-track { stroke: var(--navy-3); }
+.act.tone-navy .act-lbl { opacity: 0.75; }
+
+/* marks view on phones: tabs on one line, the colour filter on the next, nothing cut off */
+.mv-colours { padding: 5px; margin: -5px -5px -5px auto; }
+@media (max-width: 560px) {
+  .view-marks .lv-tools { flex-wrap: wrap; row-gap: 8px; }
+  .view-marks #mvTabs { flex: 1 1 100%; }
+  .view-marks .mv-colours { flex: 1 1 100%; margin: -5px; }
+  .view-marks .mv-colours .cdot { flex: 1 1 0; width: auto; height: 32px; }
+  .view-marks .mv-colours .cdot.all { flex: 0 0 auto; }
+}
+/* big rolling numbers read better with natural digit widths */
+.ct-pct { font-variant-numeric: normal; }
+
+/* in the player a toast takes the header's middle (over "Playing from"), so it never covers
+   the title, the list or the controls, and the corner buttons stay reachable */
+@media (max-width: 899px) {
+  .player-open .toasts { top: calc(var(--edge-t) + 2px); bottom: auto; left: calc(var(--edge-l) + 52px); right: calc(var(--edge-r) + 104px); width: auto; transform: none; }
+  .player-open .toast { padding: 7px 7px 7px 12px; }
+  .player-open .toast-msg { font-size: 13px; }
+}
+@media (min-width: 900px) {
+  .player-open .toasts { top: calc(14px + var(--pad) + 4px); bottom: auto; }
+}
+
+/* ═══════════════ wider palette ═══════════════
+   The board's own colours plus four that sit with them: the navy, a lighter denim, a deep
+   pine and a warm ochre / plum pair. Earthy and muted on purpose: colourful, not a rainbow. */
+:root { --pine: #2f5f58; --ochre: #d9a53f; --plum: #643349; }
+.tone-denim { --t-bg: var(--denim); --t-ink: #0c1322; --t-soft: rgba(0, 0, 0, 0.14); }
+.tone-pine { --t-bg: var(--pine); --t-ink: #e9f1ee; --t-soft: rgba(255, 255, 255, 0.12); }
+.tone-ochre { --t-bg: var(--ochre); --t-ink: #151005; --t-soft: rgba(0, 0, 0, 0.13); }
+.tone-plum { --t-bg: var(--plum); --t-ink: #f4e9ee; --t-soft: rgba(255, 255, 255, 0.12); }
+
+/* the fetch tile is the navy one; its arrow keeps the same language of states */
+.t-arrow { color: #aab4d4; }
+.t-arrow[data-state='ready'], .t-arrow[data-state='busy'] { color: #f4f6fb; }
+.arrow-label { opacity: 0.9; }
+
+/* this week's bar for today is picked out in orange */
+.bar.today .b-cur { background: var(--orange); }
+.bar.today span { color: #0d0d0d; }
+
+/* a very narrow paste tile keeps its hint readable by dropping the button's word */
+@container (max-width: 200px) { .t-paste #pasteBtn span { display: none; } .t-paste #pasteBtn { width: 28px; padding: 0; justify-content: center; } }

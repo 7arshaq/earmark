@@ -4,11 +4,12 @@ import * as player from '../player.js';
 import { addLink, overall, STAGE_LABEL, activeJobs, retry, trackForJob } from '../downloads.js';
 import { pickFiles, importFiles, pendingLinks, fetchMode } from '../importer.js';
 import { icon, tulip } from '../icons.js';
-import { Roller, stagger, nudge, swap, EASE } from '../anim.js';
+import { Roller, stagger, nudge, swap, animateList, setText, setHTML, EASE } from '../anim.js';
 import { $, h, esc, fmtTime, fmtDur, fmtBytes, sourceOf, extractUrl, dayKey, prettyFraction, haptic, throttle, motionOK } from '../util.js';
 import { toast } from './toast.js';
 import { prompt } from './sheet.js';
-import { openView } from '../views.js';
+import { openView, closeView, openTab } from '../views.js';
+import { sfx } from '../fx.js';
 import { trackMenu } from './track-actions.js';
 import { openPlayer } from './player-ui.js';
 
@@ -32,6 +33,24 @@ export function timeLabel(t) {
   return t.duration ? fmtTime(t.duration) : '—';
 }
 
+/* The four sections. Each button wears the colour of the view it opens, so the view reads
+   as the button itself growing. */
+const NAV = [
+  { go: 'library', label: 'Library', ic: 'stack', tone: 'tone-clay', view: 'library', opts: {} },
+  { go: 'fav', label: 'Favourites', ic: 'star', tone: 'tone-sage', view: 'library', opts: { filter: 'fav', tone: 'tone-sage' } },
+  { go: 'marks', label: 'Marks', ic: 'mark', tone: 'tone-khaki', view: 'marks', opts: {} },
+  { go: 'settings', label: 'Settings', ic: 'sliders', tone: 'tone-navy', view: 'settings', opts: {} },
+];
+const navButtons = (cls) =>
+  NAV.map((n) => `<button class="nav-btn ${cls} ${n.tone} press" type="button" data-go="${n.go}" data-sfx="none" aria-label="${n.label}">${icon(n.ic)}<span>${n.label}</span></button>`).join('');
+
+function go(btn) {
+  const n = NAV.find((x) => x.go === btn.dataset.go);
+  if (!n) return;
+  if (openTab() === n.go) return closeView(); // the lit tab takes you back home
+  openView(n.view, { ...n.opts, tab: n.go }, btn);
+}
+
 /** Shared result handling for anything that adds a link (paste, share target, deep link). */
 export function handleResult(res) {
   if (!res) return;
@@ -42,8 +61,10 @@ export function handleResult(res) {
     const t = res.duplicate;
     toast(`Already saved: ${t.title}`, { icon: 'check', action: { label: 'Play', fn: () => player.load(t.id) } });
   } else if (res.error && !res.job) {
+    sfx('error');
     toast(res.error, { icon: 'info' });
   } else if (res.error) {
+    sfx('error');
     toast(res.error, { icon: 'info', duration: 7000, action: { label: 'Retry', fn: () => retry(res.job).then(handleResult) } });
   } else if (res.track) {
     const t = res.track;
@@ -109,9 +130,11 @@ export function mountHome(root) {
         <div class="pc-row">
           <label class="pc-label" for="linkInput">Paste a link</label>
           <span class="pc-btns">
-            <button type="button" class="pc-btn pc-clear press" id="clearBtn" aria-label="Clear">${icon('close')}</button>
-            <button type="button" class="pc-btn pc-imp press" id="importBtn" aria-label="Import an audio file" title="Import an audio file">${icon('folder')}</button>
-            <button type="button" class="pc-btn press" id="pasteBtn">${icon('clip')}<span>Paste</span></button>
+            <button type="button" class="pc-btn pc-imp press" id="importBtn" data-fx="pop" aria-label="Import an audio file" title="Import an audio file">${icon('folder')}</button>
+            <span class="pc-swap">
+              <button type="button" class="pc-btn press" id="pasteBtn" data-fx="tilt">${icon('clip')}<span>Paste</span></button>
+              <button type="button" class="pc-btn pc-clear press" id="clearBtn" data-fx="pop" aria-label="Clear">${icon('close')}</button>
+            </span>
           </span>
         </div>
         <input id="linkInput" class="pc-input" type="url" inputmode="url" placeholder="Paste a link…" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="go" aria-label="Video link">
@@ -125,7 +148,7 @@ export function mountHome(root) {
       </div>
     </section>
 
-    <button class="tile t-arrow tone-stone press" id="fetchBtn" type="button" data-state="idle" aria-label="Fetch audio" style="--i:1">
+    <button class="tile t-arrow tone-navy press" id="fetchBtn" type="button" data-state="idle" data-sfx="press" aria-label="Fetch audio" style="--i:1">
       <i class="arrow-fill" id="arrowFill"></i>
       <span class="arrow-glyph">${tulip()}</span>
       <span class="arrow-label" id="arrowLabel">Fetch</span>
@@ -164,12 +187,7 @@ export function mountHome(root) {
       <div class="stack" id="stack"></div>
     </section>
 
-    <nav class="tile t-quick tone-silver" aria-label="Sections" style="--i:6">
-      <button class="qbtn press" data-go="library" type="button" aria-label="Library">${icon('stack')}<span>Library</span></button>
-      <button class="qbtn press" data-go="fav" type="button" aria-label="Favourites">${icon('star')}<span>Favourites</span></button>
-      <button class="qbtn press" data-go="marks" type="button" aria-label="Marks and notes">${icon('mark')}<span>Marks</span></button>
-      <button class="qbtn press" data-go="settings" type="button" aria-label="Settings">${icon('sliders')}<span>Settings</span><i class="q-dot" id="setDot" hidden></i></button>
-    </nav>
+    <nav class="t-quick" aria-label="Sections" style="--i:6">${navButtons('qbtn')}</nav>
 
     <section class="tile t-donut" id="donutTile" role="button" tabindex="0" style="--i:7">
       <svg class="dn-svg" viewBox="0 0 120 120" aria-hidden="true">
@@ -181,6 +199,10 @@ export function mountHome(root) {
       <span class="dn-cap" id="dnCap">finished</span>
     </section>
   </div>`;
+
+  // The phone's bottom row lives outside the bento, under the mini player.
+  const tabbar = document.getElementById('tabbar');
+  tabbar.innerHTML = navButtons('tab');
 
   const els = {
     form: $('#pasteForm', root),
@@ -224,7 +246,7 @@ export function mountHome(root) {
   function updateSrc() {
     const url = inputUrl();
     const src = url ? sourceOf(url) : null;
-    els.srcTag.textContent = src ? `${src.name} → MP3` : els.input.value ? 'Not a link yet' : 'YouTube · X · more';
+    setText(els.srcTag, src ? `${src.name} → audio` : els.input.value ? 'Not a link yet' : 'YouTube · X · more');
     els.form.classList.toggle('has-text', Boolean(els.input.value));
     els.form.classList.toggle('valid', Boolean(url));
     renderArrow();
@@ -372,8 +394,8 @@ export function mountHome(root) {
     if (!job) {
       els.recvTitle.textContent = 'Audio lands here';
       numRoll.set('—', { animate: false });
-      els.recvSub.textContent = '';
-      els.recvStageText.textContent = serverLabel();
+      setText(els.recvSub, '');
+      setText(els.recvStageText, serverLabel());
       els.recvBar.style.transform = 'scaleX(0)';
       return;
     }
@@ -390,9 +412,10 @@ export function mountHome(root) {
     else if (job.stage === 'error') numRoll.set('!');
     else if (job.stage === 'handoff') numRoll.set('↗');
     else numRoll.set(`${Math.round(p * 100)}%`);
-    els.recvStageText.textContent = STAGE_LABEL[job.stage] || job.stage;
-    els.recvSub.textContent =
+    setText(els.recvStageText, STAGE_LABEL[job.stage] || job.stage);
+    const sub =
       job.stage === 'done' ? `${fmtBytes(job.size)} · tap to play` : job.stage === 'error' ? (job.url ? 'Tap to retry' : '') : job.stage === 'handoff' ? 'Done? Tap to import' : busy.length > 1 ? `+${busy.length - 1} more` : m?.uploader || '';
+    setText(els.recvSub, sub);
     els.recvBar.style.transform = `scaleX(${job.stage === 'error' || job.stage === 'handoff' ? 0 : p})`;
   }
 
@@ -408,7 +431,7 @@ export function mountHome(root) {
   function renderServer() {
     const s = state.server;
     els.recvStage.dataset.server = fetchMode() === 'shortcut' ? 'ok' : s.online === null ? 'checking' : s.online && (s.ytdlp || s.demo) && (!s.locked || s.authorized) ? 'ok' : 'bad';
-    if (!state.jobs.length) els.recvStageText.textContent = serverLabel();
+    if (!state.jobs.length) setText(els.recvStageText, serverLabel());
   }
 
   /* ── continue ── */
@@ -417,9 +440,9 @@ export function mountHome(root) {
     els.cont.dataset.empty = t ? '' : '1';
     if (!t) {
       ctRoll.set('0', { animate: false });
-      els.ctKicker.textContent = 'Start here';
-      els.ctTitle.textContent = 'Nothing yet';
-      els.ctSub.textContent = 'Paste a link to begin';
+      setText(els.ctKicker, 'Start here');
+      setText(els.ctTitle, 'Nothing yet');
+      setText(els.ctSub, 'Paste a link to begin');
       els.ctFill.style.transform = 'scaleX(0)';
       return;
     }
@@ -428,9 +451,9 @@ export function mountHome(root) {
     const dur = (isCur && player.duration()) || t.duration || 0;
     const p = t.finished ? 1 : dur ? Math.min(1, pos / dur) : 0;
     ctRoll.set(String(Math.round(p * 100)));
-    els.ctKicker.textContent = isCur && player.isPlaying() ? 'Now playing' : t.finished ? 'Play again' : pos > 5 ? 'Continue' : 'Up next';
-    if (els.ctTitle.textContent !== t.title) els.ctTitle.textContent = t.title;
-    els.ctSub.textContent = t.finished ? 'Finished' : dur ? `${fmtDur(dur - pos)} left` : '';
+    setText(els.ctKicker, isCur && player.isPlaying() ? 'Now playing' : t.finished ? 'Play again' : pos > 5 ? 'Continue' : 'Up next');
+    setText(els.ctTitle, t.title);
+    setText(els.ctSub, t.finished ? 'Finished' : dur ? `${fmtDur(dur - pos)} left` : '');
     els.ctFill.style.transform = `scaleX(${p})`;
     els.cont.dataset.playing = isCur && player.isPlaying() ? '1' : '';
   }
@@ -490,10 +513,13 @@ export function mountHome(root) {
   /* ── library ── */
   let libFilter = 'all';
   function renderLibrary() {
+    animateList(els.libList, paintLibrary);
+  }
+  function paintLibrary() {
     const list = query({ sort: 'played', filter: libFilter });
-    els.libCount.textContent = state.tracks.length;
+    setText(els.libCount, state.tracks.length);
     if (!list.length) {
-      els.libList.innerHTML = `<div class="lib-empty"><span>${libFilter === 'all' ? 'Your saved audio shows up here.' : 'Nothing in here yet.'}</span><span class="dim">${libFilter === 'all' ? 'Paste a YouTube or X link above.' : ''}</span></div>`;
+      els.libList.innerHTML = `<div class="lib-empty" data-id="empty-${libFilter === 'all' ? 'all' : 'some'}"><span>${libFilter === 'all' ? 'Your saved audio shows up here.' : 'Nothing in here yet.'}</span><span class="dim">${libFilter === 'all' ? 'Paste a YouTube or X link above.' : ''}</span></div>`;
       return;
     }
     els.libList.innerHTML = list
@@ -533,8 +559,19 @@ export function mountHome(root) {
   });
   $('#libOpen', root).addEventListener('click', () => openView('library', {}, $('#libTile', root)));
 
+  let chipSig = '';
   function renderChips() {
     const chips = [{ id: 'all', name: 'Recent' }, { id: 'fav', name: 'Favourites' }, ...state.playlists.map((p) => ({ id: `pl:${p.id}`, name: p.name, color: p.color }))];
+    if (!chips.some((c) => c.id === libFilter)) libFilter = 'all';
+    const sig = chips.map((c) => `${c.id}|${c.name}|${c.color}`).join('\n');
+    if (sig === chipSig) {
+      els.libChips.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c.dataset.f === libFilter));
+      return;
+    }
+    chipSig = sig;
+    animateList(els.libChips, () => paintChips(chips), { selector: '.chip', key: (e) => e.dataset.f, y: 0 });
+  }
+  function paintChips(chips) {
     els.libChips.innerHTML = chips
       .map(
         (c) =>
@@ -547,7 +584,7 @@ export function mountHome(root) {
     if (!c || c.dataset.f === libFilter) return;
     libFilter = c.dataset.f;
     renderChips();
-    swap(els.libList, renderLibrary);
+    renderLibrary();
   });
 
   /* ── playlists stack ── */
@@ -568,7 +605,8 @@ export function mountHome(root) {
           return { id: `pl:${p.id}`, name: p.name, sub: `${tr.length} audio${tr.length === 1 ? '' : 's'}`, n: tr.length, color: p.color, pct: tr.length ? done / tr.length : 0 };
         }),
     ];
-    els.stack.innerHTML =
+    const paint = () =>
+      (els.stack.innerHTML =
       cards
         .map((c, i) => {
           const last = i === cards.length - 1 && i > 0;
@@ -580,7 +618,8 @@ export function mountHome(root) {
             ${last ? `<span class="sc-bar"><i style="transform:scaleX(${c.pct || 0})"></i></span>` : ''}
           </button>`;
         })
-        .join('') + `<button type="button" class="scard c-new press" data-new="1">${icon('plus')}<span>New playlist</span></button>`;
+        .join('') + `<button type="button" class="scard c-new press" data-new="1" data-f="+new">${icon('plus')}<span>New playlist</span></button>`);
+    animateList(els.stack, paint, { selector: '.scard', key: (e) => e.dataset.f, y: 10 });
   }
   els.stack.addEventListener('click', async (e) => {
     const c = e.target.closest('.scard');
@@ -596,13 +635,18 @@ export function mountHome(root) {
   }
   $('#newList', root).addEventListener('click', newPlaylist);
 
-  /* ── quick sections ── */
-  root.querySelector('.t-quick').addEventListener('click', (e) => {
-    const b = e.target.closest('.qbtn');
-    if (!b) return;
-    const go = b.dataset.go;
-    if (go === 'fav') openView('library', { filter: 'fav' }, b);
-    else openView(go, {}, b);
+  /* ── sections: the bottom row on phones, a tile on wide screens ── */
+  const onNav = (e) => {
+    const b = e.target.closest('[data-go]');
+    if (b) go(b);
+  };
+  root.querySelector('.t-quick').addEventListener('click', onNav);
+  tabbar.addEventListener('click', onNav);
+  on('view', ({ tab }) => {
+    document.querySelectorAll('[data-go]').forEach((b) => {
+      b.classList.toggle('on', b.dataset.go === tab);
+      b.setAttribute('aria-current', b.dataset.go === tab ? 'page' : 'false');
+    });
   });
 
   /* ── donut: finished share, or the sleep timer when it's running ── */
@@ -629,9 +673,9 @@ export function mountHome(root) {
       cap = 'finished';
     }
     els.dnSeg.style.strokeDasharray = `${(C * frac).toFixed(1)} ${C.toFixed(1)}`;
-    els.dnVal.textContent = val;
+    setText(els.dnVal, val);
     els.dnVal.classList.toggle('long', val.length > 3);
-    els.dnCap.textContent = cap;
+    setText(els.dnCap, cap);
     els.donut.dataset.mode = sl.mode;
   }
   els.donut.addEventListener('click', () => {
@@ -645,9 +689,7 @@ export function mountHome(root) {
       const t = state.byId.get(row.dataset.id);
       if (!t) return;
       row.classList.toggle('is-current', player.P.id === t.id);
-      const g = row.querySelector('.lr-g');
-      const html = glyph(t);
-      if (g.innerHTML !== html) g.innerHTML = html;
+      setHTML(row.querySelector('.lr-g'), glyph(t));
     });
   };
   const tick = throttle(() => {
@@ -697,7 +739,8 @@ export function mountHome(root) {
   renderDonut();
 
   // First paint: tiles settle in one after another.
-  stagger(root.querySelectorAll('.bento > .tile'), { y: 14, step: 50, duration: 560, scale: 0.98 });
+  stagger(root.querySelectorAll('.bento > .tile, .bento > .t-quick > *'), { y: 14, step: 50, duration: 560, scale: 0.98 });
+  stagger(tabbar.children, { y: 16, step: 45, delay: 260, duration: 520 });
   stagger(els.libList.querySelectorAll('.lrow'), { y: 8, step: 28, delay: 320 });
   stagger(els.stack.querySelectorAll('.scard'), { y: 12, step: 50, delay: 300 });
 

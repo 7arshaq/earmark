@@ -1,9 +1,10 @@
 // Mini player (collapsed) + full player sheet with marks, notes, queue, speed and sleep.
-import { state, on, getTrack, getPlaylist, setSetting, SWATCHES, MARK_COLORS } from '../store.js';
+import { state, on, getTrack, getPlaylist, setSetting, SWATCHES, MARK_COLORS, swatchSoft } from '../store.js';
 import * as player from '../player.js';
 import { icon } from '../icons.js';
-import { $, h, esc, fmtTime, fmtDur, clockAt, relDay, throttle, haptic, clamp, motionOK } from '../util.js';
-import { Roller, stagger, pop, swap, morph, collapseOut, dragDismiss, EASE } from '../anim.js';
+import { $, h, esc, fmtTime, fmtDur, clockAt, relDay, throttle, haptic, clamp, device } from '../util.js';
+import { Roller, stagger, pop, swap, morph, collapseOut, dragDismiss, animateList, setText } from '../anim.js';
+import { sfx } from '../fx.js';
 import { pushLayer } from '../nav.js';
 import { openSheet } from './sheet.js';
 import { toast } from './toast.js';
@@ -33,36 +34,57 @@ export function mountPlayer() {
   sheet = $('#player');
 
   mini.innerHTML = `
-    <button class="mini-main" type="button" data-a="open" aria-label="Open player">
+    <button class="mini-main" type="button" data-a="open" data-sfx="none" aria-label="Open player">
       <span class="mini-sw" id="miSw"><i class="eq" aria-hidden="true"><b></b><b></b><b></b></i></span>
       <span class="mini-text"><span class="mini-title" id="miTitle"></span><span class="mini-time" id="miTime">0:00</span></span>
     </button>
     <div class="mini-ctl">
-      <button class="mini-btn press skip" type="button" data-a="back" aria-label="Back">${icon('back')}<b class="n" data-n="back"></b></button>
-      <button class="mini-btn mini-play press" type="button" data-a="toggle" aria-label="Play or pause">${PP}</button>
-      <button class="mini-btn press" type="button" data-a="next" aria-label="Next audio">${icon('next')}</button>
+      <button class="mini-btn press skip" type="button" data-a="back" data-fx="spin-l" data-sfx="none" aria-label="Skip back">${icon('back')}<b class="n" data-n="back"></b></button>
+      <button class="mini-btn mini-play press" type="button" data-a="toggle" data-fx="pop" aria-label="Play or pause">${PP}</button>
+      <button class="mini-btn press" type="button" data-a="next" data-fx="nudge-r" aria-label="Next audio">${icon('next')}</button>
     </div>
     <i class="mini-prog" aria-hidden="true"><i id="miProg"></i></i>`;
 
+  // Top to bottom = far from the thumb to under it: what it is, what you saved in it,
+  // the occasional settings, then the timeline and the transport you touch all the time.
   sheet.innerHTML = `
     <div class="pl-scroll" id="plScroll">
       <div class="pl-grid" id="plGrid">
         <header class="pl-head" id="plHead">
           <i class="grab" aria-hidden="true"></i>
-          <button class="icon-btn press" type="button" data-a="collapse" aria-label="Minimise player">${icon('chev-down')}</button>
+          <button class="icon-btn press" type="button" data-a="collapse" data-fx="drop" data-sfx="none" aria-label="Minimise player">${icon('chev-down')}</button>
           <div class="pl-head-mid"><span class="eyebrow">Playing from</span><span class="pl-ctx" id="plCtx">Library</span></div>
-          <button class="icon-btn press" type="button" data-a="focus" aria-label="Switch view">${icon('focus', 'f-a')}${icon('unfocus', 'f-b')}</button>
+          <button class="icon-btn press" type="button" data-a="focus" data-fx="none" aria-label="Switch view">${icon('focus', 'f-a')}${icon('unfocus', 'f-b')}</button>
           <button class="icon-btn press" type="button" data-a="more" aria-label="More">${icon('more')}</button>
         </header>
 
         <section class="tile pl-title" id="plTitle">
-          <div class="pt-top">
-            <span class="pt-src" id="plSrc"></span>
-            <button class="pt-fav press" type="button" data-a="fav" aria-label="Favourite">${icon('star', 's-a')}${icon('star-fill', 's-b')}</button>
-          </div>
-          <h2 class="pt-name" id="plName" data-a="rename" role="button" tabindex="0" title="Rename"></h2>
-          <p class="pt-orig" id="plOrig"></p>
           <div class="pt-chips" id="plChips"></div>
+          <button class="pt-fav press" type="button" data-a="fav" data-fx="none" aria-label="Favourite">${icon('star', 's-a')}${icon('star-fill', 's-b')}</button>
+          <h2 class="pt-name" id="plName" data-a="rename" role="button" tabindex="0" title="Rename"></h2>
+        </section>
+
+        <section class="tile tone-gray pl-panel" id="plPanel">
+          <div class="seg" id="plTabs" role="tablist">
+            <i class="seg-pill" aria-hidden="true"></i>
+            <button type="button" role="tab" data-tab="marks">Marks <b id="cMarks"></b></button>
+            <button type="button" role="tab" data-tab="notes">Notes <b id="cNotes"></b></button>
+            <button type="button" role="tab" data-tab="queue">Up next <b id="cQueue"></b></button>
+          </div>
+          <div class="panel-body" id="plBody"></div>
+        </section>
+
+        <section class="tile tone-silver pl-vol" id="plVol">
+          <button class="icon-btn press" type="button" data-a="mute" data-fx="none" aria-label="Mute">${icon('volume', 'v-a')}${icon('mute', 'v-b')}</button>
+          <input class="range" type="range" min="0" max="1" step="0.01" id="volRange" aria-label="Volume">
+          <span class="vol-val" id="volVal">100</span>
+        </section>
+
+        <section class="pl-acts">
+          <button class="act tone-orange press" type="button" data-a="speed" data-fx="wiggle"><span class="act-lbl">Speed</span><span class="act-val" id="actSpeed">1×</span>${icon('gauge')}</button>
+          <button class="act tone-navy press" type="button" data-a="sleep" data-fx="tilt"><span class="act-lbl">Sleep</span><span class="act-val" id="actSleep">Off</span>${icon('moon')}</button>
+          <button class="act tone-khaki press" type="button" data-a="mark" data-fx="stamp" data-sfx="none"><span class="act-lbl">Mark</span><span class="act-val" id="actMark">+</span>${icon('mark-plus')}</button>
+          <button class="act tone-sage press" type="button" data-a="share" data-fx="lift"><span class="act-lbl">Share</span><span class="act-val">Send</span>${icon('share')}</button>
         </section>
 
         <section class="tile tone-paper pl-time">
@@ -75,44 +97,22 @@ export function mountPlayer() {
         </section>
 
         <section class="pl-ctl">
-          <button class="ctl press" type="button" data-a="prev" aria-label="Previous">${icon('prev')}</button>
-          <button class="ctl skip press" type="button" data-a="back" aria-label="Skip back">${icon('back')}<b class="n" data-n="back"></b></button>
-          <button class="ctl ctl-play press" type="button" data-a="toggle" aria-label="Play or pause">${PP}</button>
-          <button class="ctl skip press" type="button" data-a="fwd" aria-label="Skip forward">${icon('fwd')}<b class="n" data-n="fwd"></b></button>
-          <button class="ctl press" type="button" data-a="next" aria-label="Next">${icon('next')}</button>
-        </section>
-
-        <section class="pl-acts">
-          <button class="act tone-orange press" type="button" data-a="speed"><span class="act-lbl">Speed</span><span class="act-val" id="actSpeed">1×</span>${icon('gauge')}</button>
-          <button class="act tone-stone press" type="button" data-a="sleep"><span class="act-lbl">Sleep</span><span class="act-val" id="actSleep">Off</span>${icon('moon')}</button>
-          <button class="act tone-khaki press" type="button" data-a="mark"><span class="act-lbl">Mark</span><span class="act-val" id="actMark">0</span>${icon('mark-plus')}</button>
-          <button class="act tone-sage press" type="button" data-a="share"><span class="act-lbl">Share</span><span class="act-val">Send</span>${icon('share')}</button>
-        </section>
-
-        <section class="tile tone-silver pl-vol" id="plVol">
-          <button class="icon-btn press" type="button" data-a="mute" aria-label="Mute">${icon('volume', 'v-a')}${icon('mute', 'v-b')}</button>
-          <input class="range" type="range" min="0" max="1" step="0.01" id="volRange" aria-label="Volume">
-          <span class="vol-val" id="volVal">100</span>
-        </section>
-
-        <section class="tile tone-gray pl-panel" id="plPanel">
-          <div class="seg" id="plTabs" role="tablist">
-            <i class="seg-pill" aria-hidden="true"></i>
-            <button type="button" role="tab" data-tab="marks">Marks <b id="cMarks"></b></button>
-            <button type="button" role="tab" data-tab="notes">Notes <b id="cNotes"></b></button>
-            <button type="button" role="tab" data-tab="queue">Up next <b id="cQueue"></b></button>
-          </div>
-          <div class="panel-body" id="plBody"></div>
+          <button class="ctl press" type="button" data-a="prev" data-fx="nudge-l" aria-label="Previous">${icon('prev')}</button>
+          <button class="ctl skip press" type="button" data-a="back" data-fx="spin-l" data-sfx="none" aria-label="Skip back">${icon('back')}<b class="n" data-n="back"></b></button>
+          <button class="ctl ctl-play press" type="button" data-a="toggle" data-fx="pop" aria-label="Play or pause">${PP}</button>
+          <button class="ctl skip press" type="button" data-a="fwd" data-fx="spin-r" data-sfx="none" aria-label="Skip forward">${icon('fwd')}<b class="n" data-n="fwd"></b></button>
+          <button class="ctl press" type="button" data-a="next" data-fx="nudge-r" aria-label="Next">${icon('next')}</button>
         </section>
       </div>
     </div>`;
 
-  for (const id of ['miTitle', 'miTime', 'miProg', 'miSw', 'plCtx', 'plSrc', 'plName', 'plOrig', 'plChips', 'plTitle', 'plElapsed', 'plTotal', 'plPct', 'plLeft', 'plEnds', 'actSpeed', 'actSleep', 'actMark', 'plBody', 'plTabs', 'volRange', 'volVal', 'plVol', 'cMarks', 'cNotes', 'cQueue', 'plScroll']) {
+  for (const id of ['miTitle', 'miTime', 'miProg', 'miSw', 'plCtx', 'plName', 'plChips', 'plTitle', 'plElapsed', 'plTotal', 'plPct', 'plLeft', 'plEnds', 'actSpeed', 'actSleep', 'actMark', 'plBody', 'plTabs', 'volRange', 'volVal', 'plVol', 'cMarks', 'cNotes', 'cQueue', 'plScroll']) {
     R[id] = document.getElementById(id);
   }
   R.elapsedRoll = new Roller(R.plElapsed);
   R.pctRoll = new Roller(R.plPct);
   R.speedRoll = new Roller(R.actSpeed);
+  R.markRoll = new Roller(R.actMark);
 
   scrub = createScrubber({
     onScrub: (t) => {
@@ -148,12 +148,9 @@ export function mountPlayer() {
       case 'toggle':
         return player.toggle();
       case 'back':
-      case 'fwd': {
-        player.skip(a === 'back' ? -1 : 1);
-        const svg = b.querySelector('svg');
-        if (motionOK()) svg.animate([{ transform: 'rotate(0)' }, { transform: `rotate(${a === 'back' ? -50 : 50}deg)` }, { transform: 'rotate(0)' }], { duration: 380, easing: EASE.out });
-        return;
-      }
+        return player.skip(-1);
+      case 'fwd':
+        return player.skip(1);
       case 'next':
         return player.next();
       case 'prev':
@@ -201,7 +198,18 @@ export function mountPlayer() {
   mini.addEventListener('pointerup', resetMini);
   mini.addEventListener('pointercancel', resetMini);
 
-  dragDismiss(sheet, { handle: $('#plHead'), onDismiss: () => closeFn?.() });
+  // Pull the player down from anywhere to put it away; the home screen rises back as it goes.
+  const app = $('#app');
+  dragDismiss(sheet, {
+    mouseHandle: $('#plHead'),
+    canStart: (e) => isOpen && !e.target.closest('.scrub, input, textarea, .q-grip, .mk-tick'),
+    onDismiss: () => closeFn?.(),
+    onProgress: (p, live) => {
+      app.style.transition = live ? 'none' : '';
+      app.style.transform = live ? `scale(${0.94 + 0.06 * p})` : '';
+      app.style.opacity = live ? String(0.5 + 0.5 * p) : '';
+    },
+  });
 
   // tabs
   R.plTabs.addEventListener('click', (e) => {
@@ -210,8 +218,12 @@ export function mountPlayer() {
   });
   wirePanel();
 
-  // volume
-  if (!player.P.volumeSupported) R.plVol.hidden = true;
+  // volume: phones have real buttons for it (and an iPhone ignores anything else), so the
+  // slider only appears where there is a mouse.
+  if (!player.P.volumeSupported || device.coarse) {
+    R.plVol.hidden = true;
+    sheet.classList.add('no-vol');
+  }
   R.volRange.addEventListener('input', () => {
     player.setVolume(Number(R.volRange.value));
   });
@@ -240,8 +252,8 @@ export function mountPlayer() {
   });
   on('player:sleep', renderSleep);
   on('player:sleep-tick', throttle(renderSleep, 1000));
-  on('player:sleep-done', () => toast('Sleep timer — paused. Good night.', { icon: 'moon', duration: 5000 }));
-  on('player:end-of-queue', () => toast("That's the end — nothing queued after this.", { icon: 'queue', duration: 2400 }));
+  on('player:sleep-done', () => toast('Sleep timer: paused. Good night.', { icon: 'moon', duration: 5000 }));
+  on('player:end-of-queue', () => toast("That's the end. Nothing queued after this.", { icon: 'queue', duration: 2400 }));
   on('player:blocked', () => toast('Tap play to start', { icon: 'play', duration: 2400 }));
   on('player:error', (d) => toast(d?.message || 'Playback error', { icon: 'info' }));
   on('marks', (d) => {
@@ -285,7 +297,8 @@ export function openPlayer() {
   sheet.inert = false;
   document.documentElement.classList.add('player-open');
   R.plScroll.scrollTop = 0;
-  stagger(sheet.querySelectorAll('.pl-grid > *'), { y: 28, step: 36, delay: 70, duration: 560 });
+  sfx('open');
+  stagger(sheet.querySelectorAll('.pl-grid > *:not([hidden])'), { y: 26, step: 34, delay: 80, duration: 560 });
   closeFn = pushLayer(closePlayer, 'player');
   loop();
 }
@@ -293,6 +306,7 @@ export function openPlayer() {
 function closePlayer() {
   isOpen = false;
   closeFn = null;
+  sfx('close');
   sheet.classList.remove('open');
   sheet.style.transform = '';
   sheet.setAttribute('aria-hidden', 'true');
@@ -329,19 +343,23 @@ function renderTrack() {
     el.style.setProperty('--sw', sw.bg);
     el.style.setProperty('--sw-ink', sw.ink);
     el.style.setProperty('--sw-dim', sw.dim);
+    el.style.setProperty('--sw-soft', swatchSoft(sw));
   }
-  if (R.miTitle.textContent !== t.title) R.miTitle.textContent = t.title;
-  if (R.plName.textContent !== t.title) R.plName.textContent = t.title;
-  R.plOrig.textContent = t.originalTitle && t.originalTitle !== t.title ? t.originalTitle : t.uploader || '';
-  R.plSrc.textContent = [t.source, t.uploader].filter(Boolean).join(' · ') || 'Audio';
-  R.plCtx.textContent = player.P.context?.label || 'Library';
+  // The name appears once, and it's the short one. No source, no channel.
+  setText(R.miTitle, t.title);
+  setText(R.plName, t.title);
+  setText(R.plCtx, player.P.context?.label || 'Library');
   sheet.querySelector('.pt-fav').classList.toggle('on', Boolean(t.favorite));
   const chips = t.playlists
     .map(getPlaylist)
     .filter(Boolean)
-    .map((p) => `<button type="button" class="chip sm press" data-a="lists"><i class="sw" style="--sw:${SWATCHES[p.color % SWATCHES.length].bg}"></i>${esc(p.name)}</button>`)
+    .map((p) => `<button type="button" class="chip sm press" data-a="lists" data-k="${p.id}"><i class="sw" style="--sw:${SWATCHES[p.color % SWATCHES.length].bg}"></i>${esc(p.name)}</button>`)
     .join('');
-  R.plChips.innerHTML = chips + `<button type="button" class="chip sm ghost press" data-a="lists">${icon('plus')}${t.playlists.length ? '' : 'Playlist'}</button>`;
+  const html = chips + `<button type="button" class="chip sm ghost press" data-a="lists" data-k="+">${icon('plus')}${t.playlists.length ? '' : 'Playlist'}</button>`;
+  if (R.plChips.dataset.sig !== html) {
+    R.plChips.dataset.sig = html;
+    animateList(R.plChips, () => (R.plChips.innerHTML = html), { selector: '.chip', key: (e) => e.dataset.k, y: 0 });
+  }
   renderMarksOnScrub();
   renderCounts();
   renderState();
@@ -356,10 +374,10 @@ function renderMarksOnScrub(freshId) {
 function renderCounts() {
   const t = player.current();
   if (!t) return;
-  R.cMarks.textContent = t.marks.length || '';
-  R.cNotes.textContent = t.notes?.length || '';
-  R.cQueue.textContent = player.P.queue.length || '';
-  R.actMark.textContent = t.marks.length ? `${t.marks.length}` : '+';
+  setText(R.cMarks, t.marks.length || '');
+  setText(R.cNotes, t.notes?.length || '');
+  setText(R.cQueue, player.P.queue.length || '');
+  R.markRoll.set(t.marks.length ? `${t.marks.length}` : '+');
 }
 
 function renderState() {
@@ -413,7 +431,11 @@ function renderSleep() {
   const sl = player.P.sleep;
   const b = sheet.querySelector('[data-a="sleep"]');
   b.classList.toggle('active', sl.mode !== 'off');
-  R.actSleep.textContent = sl.mode === 'time' ? fmtTime(player.sleepLeft() / 1000) : sl.mode === 'end' ? 'End' : 'Off';
+  const label = sl.mode === 'time' ? fmtTime(player.sleepLeft() / 1000) : sl.mode === 'end' ? 'End' : 'Off';
+  // A countdown just ticks; switching the timer on or off gets a crossfade.
+  if (b.dataset.mode === sl.mode) R.actSleep.textContent = label;
+  else setText(R.actSleep, label);
+  b.dataset.mode = sl.mode;
 }
 
 /* smooth progress while playing */
@@ -441,16 +463,21 @@ function setTab(name, animate) {
     pill.style.width = `${btn.offsetWidth}px`;
     pill.style.transform = `translateX(${btn.offsetLeft}px)`;
   });
-  if (animate) swap(R.plBody, () => renderPanel());
-  else renderPanel();
+  if (animate) swap(R.plBody, () => paintPanel());
+  else paintPanel();
 }
 
+/** Same tab, new contents: rows glide, arrive and leave instead of blinking. */
 function renderPanel(freshId) {
+  animateList(R.plBody, () => paintPanel(freshId), { selector: 'li[data-id]' });
+}
+
+function paintPanel(freshId) {
   const t = player.current();
   if (!t) return;
   if (tab === 'marks') {
     R.plBody.innerHTML = `
-      <button class="add-row press" type="button" data-p="add-mark">${icon('mark-plus')}<span>Mark this moment</span><b id="markAt">${fmtTime(player.time())}</b></button>
+      <button class="add-row press" type="button" data-p="add-mark" data-fx="stamp" data-sfx="none">${icon('mark-plus')}<span>Mark this moment</span><b id="markAt">${fmtTime(player.time())}</b></button>
       ${
         t.marks.length
           ? `<ul class="mk-list">${t.marks
@@ -465,7 +492,6 @@ function renderPanel(freshId) {
               .join('')}</ul>`
           : `<p class="panel-empty">Marks pin a moment — a quote, a step, the good part. They show up on the timeline and in the Marks view.</p>`
       }`;
-    if (freshId) stagger(R.plBody.querySelectorAll('.mk.fresh'), { y: -6, scale: 0.98 });
   } else if (tab === 'notes') {
     const notes = [...(t.notes || [])].reverse();
     R.plBody.innerHTML = `
@@ -598,7 +624,6 @@ function wirePanel() {
     player.addNote(t.id, text, at);
     ta.value = '';
     renderPanel();
-    stagger(body.querySelectorAll('.note:first-child'), { y: -8 });
   });
   body.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && e.target.matches('.note-input')) body.querySelector('#noteForm').requestSubmit();

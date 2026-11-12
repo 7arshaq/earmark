@@ -3,7 +3,7 @@ import { state, on, MARK_COLORS } from '../store.js';
 import * as player from '../player.js';
 import { icon, tulip } from '../icons.js';
 import { esc, fmtTime, relDay } from '../util.js';
-import { stagger, swap } from '../anim.js';
+import { stagger, swap, animateList, reveal, setText } from '../anim.js';
 import { closeView } from '../views.js';
 
 export const tone = 'tone-khaki';
@@ -41,7 +41,11 @@ export function mount(el) {
 
   function renderColours() {
     const box = q('#mvColours');
-    box.hidden = tab !== 'marks';
+    reveal(box, tab === 'marks');
+    if (box.childElementCount) {
+      box.querySelectorAll('.cdot').forEach((d) => d.classList.toggle('on', (d.dataset.c || null) === colour));
+      return;
+    }
     box.innerHTML =
       `<button type="button" class="cdot all press ${colour === null ? 'on' : ''}" data-c="" aria-label="All colours">All</button>` +
       MARK_COLORS.map((c) => `<button type="button" class="cdot press ${colour === c ? 'on' : ''}" data-c="${c}" style="--c:${c}" aria-label="Filter by colour"></button>`).join('');
@@ -51,25 +55,29 @@ export function mount(el) {
     const tracks = state.tracks.slice().sort((a, b) => (b.lastPlayedAt || b.addedAt) - (a.lastPlayedAt || a.addedAt));
     const totalMarks = tracks.reduce((n, t) => n + t.marks.length, 0);
     const totalNotes = tracks.reduce((n, t) => n + (t.notes?.length || 0), 0);
-    q('#mvSub').textContent = `${totalMarks} bookmark${totalMarks === 1 ? '' : 's'} · ${totalNotes} note${totalNotes === 1 ? '' : 's'}`;
+    setText(q('#mvSub'), `${totalMarks} bookmark${totalMarks === 1 ? '' : 's'} · ${totalNotes} note${totalNotes === 1 ? '' : 's'}`);
     let html = '';
     for (const t of tracks) {
       if (tab === 'marks') {
         const ms = t.marks.filter((m) => !colour || m.color === colour);
         if (!ms.length) continue;
-        html += `<section class="mgroup"><div class="mg-head"><span class="mg-title">${esc(t.title)}</span><span class="mg-count">${ms.length}</span></div>
+        html += `<section class="mgroup" data-id="${t.id}"><div class="mg-head"><span class="mg-title">${esc(t.title)}</span><span class="mg-count">${ms.length}</span></div>
           ${ms.map((m) => `<button type="button" class="mrow press" data-tid="${t.id}" data-t="${m.t}"><i class="mk-dot" style="--c:${m.color}"></i><span class="mr-name">${esc(m.name)}</span><span class="mr-t">${icon('play')}${fmtTime(m.t)}</span></button>`).join('')}</section>`;
       } else {
         const ns = (t.notes || []).slice().reverse();
         if (!ns.length) continue;
-        html += `<section class="mgroup"><div class="mg-head"><span class="mg-title">${esc(t.title)}</span><span class="mg-count">${ns.length}</span></div>
+        html += `<section class="mgroup" data-id="${t.id}"><div class="mg-head"><span class="mg-title">${esc(t.title)}</span><span class="mg-count">${ns.length}</span></div>
           ${ns.map((n) => `<button type="button" class="nrow press" data-tid="${t.id}" ${n.t != null ? `data-t="${n.t}"` : ''}><span class="nr-text">${esc(n.text)}</span><span class="nr-meta">${n.t != null ? `${icon('play')}${fmtTime(n.t)} · ` : ''}${relDay(n.at)}</span></button>`).join('')}</section>`;
       }
     }
-    list.innerHTML =
+    const paint = () =>
+      (list.innerHTML =
       html ||
-      `<div class="v-empty"><span class="ve-big">${tab === 'marks' ? 'No bookmarks yet' : 'No notes yet'}</span><span>${tab === 'marks' ? 'While listening, tap Mark to pin a moment. Name it, colour it, jump back any time.' : 'Open the player and write in the Notes tab — notes can hold the exact time.'}</span></div>`;
-    if (animate) stagger(list.querySelectorAll('.mgroup'), { y: 10, step: 40 });
+      `<div class="v-empty" data-id="empty:${tab}"><span class="ve-big">${tab === 'marks' ? 'No bookmarks yet' : 'No notes yet'}</span><span>${tab === 'marks' ? 'While listening, tap Mark to pin a moment. Name it, colour it, jump back any time.' : 'Open the player and write in the Notes tab. Notes can hold the exact time.'}</span></div>`);
+    if (animate) {
+      paint();
+      stagger(list.querySelectorAll('.mgroup'), { y: 10, step: 40 });
+    } else animateList(list, paint);
   }
 
   el.querySelector('.back-btn').addEventListener('click', closeView);

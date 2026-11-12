@@ -1,6 +1,6 @@
 // Audio engine: one <audio> element, Media Session for lock-screen controls,
 // queue + "play next", sleep timer, resume, listening stats.
-import { state, emit, getTrack, getPlaylist, saveTrack, saveTrackSoon, saveSession, addListen, setSetting, continueTrack, MARK_COLORS } from './store.js';
+import { state, on, emit, getTrack, getPlaylist, saveTrack, saveTrackSoon, saveSession, addListen, setSetting, continueTrack, MARK_COLORS } from './store.js';
 import { get as dbGet } from './db.js';
 import { artworkFor } from './artwork.js';
 import { clamp, uid, device } from './util.js';
@@ -19,14 +19,13 @@ export const P = {
 };
 
 let objectUrl = null;
-let pendingSeek = 0;
 let lastTick = 0;
 let baseVolume = 1;
 let sleepTimer = null;
 
 export const current = () => (P.id ? getTrack(P.id) : null);
 export const isPlaying = () => Boolean(P.id) && !audio.paused && !audio.ended;
-export const time = () => (pendingSeek && !P.ready ? pendingSeek : audio.currentTime || 0);
+export const time = () => (want ? want.t : audio.currentTime || 0);
 export const duration = () => (Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : current()?.duration || 0);
 
 // iOS ignores element volume (hardware buttons only) — detect instead of pretending.
@@ -37,6 +36,67 @@ try {
   audio.volume = v;
 } catch {
   P.volumeSupported = false;
+}
+
+/* ───────────── seeking ─────────────
+   A jump isn't done until the element says so. iOS drops a seek made before the file's
+   header has loaded (which only happens after the first tap on play), so the wanted
+   position is kept and re-applied until it lands — and the display shows it meanwhile. */
+
+let want = null; // { t, tries, start, ticks }
+let heldMute = false; // silenced by us while the opening jump lands
+let noSeekFor = null;
+let swapWhenQuiet = false;
+
+function hold() {
+  if (audio.muted) return;
+  audio.muted = true;
+  heldMute = true;
+  setTimeout(release, 2500);
+}
+function release() {
+  if (!heldMute) return;
+  heldMute = false;
+  audio.muted = false;
+}
+
+function wantSeek(target, start = false) {
+  want = { t: target, tries: 0, start, ticks: 0 };
+  if (start && !audio.paused) hold();
+  trySeek();
+}
+
+/** Does the browser say this moment can be jumped to yet? (It may need more of the file first.) */
+function reachable(t) {
+  const s = audio.seekable;
+  for (let i = 0; i < (s?.length || 0); i++) if (t >= s.start(i) - 0.5 && t <= s.end(i) + 0.5) return true;
+  return false;
+}
+
+function trySeek() {
+  const w = want;
+  if (!w || audio.readyState < 1 || audio.seeking) return;
+  if (Math.abs(audio.currentTime - w.t) < 0.6) return landed(true);
+  // Not reachable yet: wait for the browser instead of burning attempts. After a couple of
+  // seconds of actual playback, try regardless (some browsers under-report this).
+  if (!reachable(w.t) && w.ticks < 10) return;
+  if (w.tries >= 6) return landed(false);
+  w.tries++;
+  try {
+    audio.currentTime = w.t;
+  } catch {}
+}
+
+function landed(ok) {
+  const w = want;
+  want = null;
+  release();
+  if (!ok && w && P.id && noSeekFor !== P.id) {
+    noSeekFor = P.id;
+    emit('player:noseek', { id: P.id });
+  }
+  updatePositionState();
+  emit('player:time', { seek: true });
 }
 
 /* ───────────── loading & transport ───────────── */
@@ -77,17 +137,14 @@ export function load(id, { autoplay = true, at = null, context = null, noHistory
   }
   P.id = id;
   P.ready = false;
-  pendingSeek = start > 0.5 ? start : 0;
+  want = null;
+  release();
 
   audio.defaultPlaybackRate = state.settings.speed;
   audio.src = objectUrl;
   audio.playbackRate = state.settings.speed;
   audio.preservesPitch = true;
-  if (pendingSeek) {
-    try {
-      audio.currentTime = pendingSeek;
-    } catch {}
-  }
+  if (start > 0.5) wantSeek(start, true);
 
   t.lastPlayedAt = Date.now();
   saveTrack(t, { silent: true });
@@ -106,8 +163,10 @@ export function play() {
     if (t) load(t.id, { autoplay: true });
     return;
   }
+  if (want?.start) hold();
   const p = audio.play();
   p?.catch?.((err) => {
+    release();
     if (err?.name === 'NotAllowedError') emit('player:blocked');
   });
 }
@@ -117,16 +176,10 @@ export const toggle = () => (audio.paused ? play() : pause());
 export function seek(t) {
   if (!P.id) return;
   const d = duration();
-  const target = clamp(t, 0, Math.max(0, d - 0.3));
-  if (!P.ready) pendingSeek = target;
-  try {
-    audio.currentTime = target;
-  } catch {}
+  const target = d > 0 ? clamp(t, 0, Math.max(0, d - 0.25)) : Math.max(0, t);
+  wantSeek(target);
   const tr = current();
-  if (tr) {
-    tr.position = target;
-    if (tr.finished && target < d - 2) tr.finished = false;
-  }
+  if (tr && tr.finished && target < d - 2) tr.finished = false;
   commitPosition();
   emit('player:time', { seek: true });
   updatePositionState();
@@ -181,7 +234,33 @@ export function prev() {
   load(id, { autoplay: true, noHistory: true });
 }
 
+/** The stored file was replaced (made skippable): switch to it without losing the place. */
+function reloadSource() {
+  const blob = P.id && state.blobs.get(P.id);
+  if (!blob) return;
+  if (!audio.paused && document.hidden) {
+    swapWhenQuiet = true; // never interrupt audio playing behind the lock screen
+    return;
+  }
+  swapWhenQuiet = false;
+  const at = time();
+  const playing = !audio.paused;
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  objectUrl = URL.createObjectURL(blob);
+  P.ready = false;
+  noSeekFor = null;
+  want = null;
+  audio.src = objectUrl;
+  audio.playbackRate = state.settings.speed;
+  if (at > 0.5) wantSeek(at, true);
+  if (playing) play();
+  emit('player:state');
+}
+on('blob', (d) => d?.id === P.id && reloadSource());
+
 export function unload() {
+  want = null;
+  release();
   audio.pause();
   audio.removeAttribute('src');
   audio.load();
@@ -206,7 +285,8 @@ export function playFrom(id, ids, label) {
 function commitPosition() {
   const t = current();
   if (!t) return;
-  if (P.ready && !pendingSeek) t.position = audio.currentTime;
+  if (want) t.position = want.t;
+  else if (P.ready) t.position = audio.currentTime;
   saveTrack(t, { silent: true });
 }
 
@@ -373,8 +453,8 @@ export function setMetadata(t = current()) {
   try {
     ms.metadata = new MediaMetadata({
       title: t.title,
-      artist: t.uploader || t.source || 'Earmark',
-      album: pl?.name || 'Earmark',
+      artist: pl?.name || 'Earmark',
+      album: 'Earmark',
       artwork: [{ src: artworkFor(t), sizes: '512x512', type: 'image/png' }],
     });
   } catch {}
@@ -385,39 +465,40 @@ function updatePositionState() {
   const d = audio.duration;
   if (!Number.isFinite(d) || d <= 0) return;
   try {
-    ms.setPositionState({ duration: d, playbackRate: audio.playbackRate || 1, position: clamp(audio.currentTime, 0, d) });
+    ms.setPositionState({ duration: d, playbackRate: audio.playbackRate || 1, position: clamp(time(), 0, d) });
   } catch {}
 }
 
-if (ms) {
+/**
+ * The phone's own controls. An iPhone shows one pair of side buttons — skip ±seconds or
+ * previous/next — so it gets whichever Settings asks for; everything else gets both.
+ * Skips always use your own seconds, not the system's 10.
+ */
+function bindMediaKeys() {
+  if (!ms) return;
   const set = (action, fn) => {
     try {
       ms.setActionHandler(action, fn);
     } catch {}
   };
+  const tracks = state.settings.lockButtons === 'tracks';
+  const skips = !device.ios || !tracks;
+  const jumps = !device.ios || tracks;
   set('play', () => play());
   set('pause', () => pause());
-  set('stop', () => pause());
-  set('seekbackward', (d) => seek(time() - (d?.seekOffset || state.settings.skipBack)));
-  set('seekforward', (d) => seek(time() + (d?.seekOffset || state.settings.skipFwd)));
-  set('seekto', (d) => {
-    if (d.fastSeek && 'fastSeek' in audio) audio.fastSeek(d.seekTime);
-    else seek(d.seekTime);
-  });
-  set('previoustrack', () => prev());
-  set('nexttrack', () => next());
+  set('seekbackward', skips ? () => skip(-1) : null);
+  set('seekforward', skips ? () => skip(1) : null);
+  set('previoustrack', jumps ? () => prev() : null);
+  set('nexttrack', jumps ? () => next() : null);
+  set('seekto', (d) => Number.isFinite(d?.seekTime) && seek(d.seekTime));
 }
+on('settings', (d) => d?.k === 'lockButtons' && bindMediaKeys());
 
 /* ───────────── element events ───────────── */
 
 audio.addEventListener('loadedmetadata', () => {
   P.ready = true;
-  if (pendingSeek && Math.abs(audio.currentTime - pendingSeek) > 1) {
-    try {
-      audio.currentTime = pendingSeek;
-    } catch {}
-  }
-  pendingSeek = 0;
+  trySeek();
   audio.playbackRate = state.settings.speed;
   const t = current();
   if (t && Number.isFinite(audio.duration) && Math.abs((t.duration || 0) - audio.duration) > 1) {
@@ -428,9 +509,20 @@ audio.addEventListener('loadedmetadata', () => {
   emit('player:time');
 });
 
+for (const ev of ['loadeddata', 'canplay', 'playing', 'seeked']) audio.addEventListener(ev, trySeek);
+
 audio.addEventListener('timeupdate', () => {
   const t = current();
-  if (!t || !P.ready) return;
+  if (!t) return;
+  if (want) {
+    // Counted in playback ticks (about four a second), so time spent paused never counts
+    // against a jump that is simply waiting for the file to load.
+    want.ticks++;
+    trySeek();
+    if (want && want.ticks > 28) landed(false); // ~7 s of playing and still not there
+    if (want) return; // still on its way: don't overwrite the place we're heading to
+  }
+  if (!P.ready) return;
   t.position = audio.currentTime;
   saveTrackSoon(t);
   const now = performance.now();
@@ -451,7 +543,9 @@ audio.addEventListener('play', () => {
 });
 audio.addEventListener('pause', () => {
   lastTick = 0;
+  release();
   commitPosition();
+  if (swapWhenQuiet) reloadSource();
   if (ms) ms.playbackState = 'paused';
   emit('player:state');
 });
@@ -480,12 +574,34 @@ audio.addEventListener('error', () => {
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) commitPosition();
+  else if (swapWhenQuiet) reloadSource();
 });
 addEventListener('pagehide', commitPosition);
 
 /* ───────────── boot ───────────── */
 
+/** Plain-text snapshot for troubleshooting playback on a phone (Settings → About). */
+export function report() {
+  const t = current();
+  const blob = t && state.blobs.get(t.id);
+  const ranges = (r) => {
+    const out = [];
+    for (let i = 0; i < (r?.length || 0); i++) out.push(`${r.start(i).toFixed(1)}–${r.end(i).toFixed(1)}`);
+    return out.join(' ') || 'none';
+  };
+  return [
+    `track: ${t ? `${t.title} (${t.source || 'file'})` : 'none'}`,
+    `file: ${blob ? `${blob.type || '?'} · ${(blob.size / 1048576).toFixed(1)} MB · checked ${t.cx ?? 'no'}` : 'none'}`,
+    `state: ready ${audio.readyState} · net ${audio.networkState} · ${audio.paused ? 'paused' : 'playing'}${audio.seeking ? ' · seeking' : ''}${audio.error ? ` · error ${audio.error.code}` : ''}`,
+    `time: ${audio.currentTime.toFixed(1)} of ${Number.isFinite(audio.duration) ? audio.duration.toFixed(1) : audio.duration} · saved ${(t?.position || 0).toFixed(1)}${want ? ` · heading to ${want.t.toFixed(1)} (try ${want.tries})` : ''}`,
+    `seekable: ${ranges(audio.seekable)}`,
+    `buffered: ${ranges(audio.buffered)}`,
+    `lock buttons: ${state.settings.lockButtons || 'skip'} · skip ${state.settings.skipBack}/${state.settings.skipFwd}s · speed ${audio.playbackRate}`,
+  ].join('\n');
+}
+
 export function restore() {
+  bindMediaKeys();
   baseVolume = state.settings.volume ?? 1;
   if (P.volumeSupported) audio.volume = baseVolume;
   const s = state.session;

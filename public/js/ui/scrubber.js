@@ -1,5 +1,6 @@
 // Seek bar with coloured bookmark ticks and a time bubble while dragging.
 import { h, clamp, fmtTime, esc } from '../util.js';
+import { animateList } from '../anim.js';
 
 export function createScrubber({ onSeek, onScrub, onMark } = {}) {
   const el = h(`
@@ -95,13 +96,16 @@ export function createScrubber({ onSeek, onScrub, onMark } = {}) {
     },
     marks(list, duration, freshId) {
       dur = duration || dur;
-      marksEl.innerHTML = (list || [])
+      const html = (list || [])
         .filter(() => dur)
         .map(
           (m) =>
-            `<button type="button" class="mk-tick ${m.id === freshId ? 'fresh' : ''}" data-t="${m.t}" style="left:${(m.t / dur) * 100}%;--c:${m.color}" aria-label="${esc(m.name)} at ${fmtTime(m.t)}" title="${esc(m.name)} · ${fmtTime(m.t)}"></button>`,
+            `<button type="button" class="mk-tick" data-id="${m.id}" data-t="${m.t}" style="left:${(m.t / dur) * 100}%;--c:${m.color}" aria-label="${esc(m.name)} at ${fmtTime(m.t)}" title="${esc(m.name)} · ${fmtTime(m.t)}"></button>`,
         )
         .join('');
+      if (marksEl.dataset.sig === html) return;
+      marksEl.dataset.sig = html;
+      animateList(marksEl, () => (marksEl.innerHTML = html), { selector: '.mk-tick', y: -12 });
     },
   };
 }
