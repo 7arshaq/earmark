@@ -4,7 +4,8 @@ import * as player from '../player.js';
 import * as api from '../api.js';
 import { icon, tulip } from '../icons.js';
 import { h, esc, device, fmtBytes, haptic, BUILD } from '../util.js';
-import { Roller, stagger, swap, reveal } from '../anim.js';
+import { Roller, stagger, swap, reveal, setText, expandFrom, collapseTo } from '../anim.js';
+import { pushLayer } from '../nav.js';
 import { sfx } from '../fx.js';
 import { closeView } from '../views.js';
 import { confirmSheet } from './sheet.js';
@@ -66,9 +67,23 @@ export function mount(el) {
       <button class="back-btn press" type="button" aria-label="Back">${tulip()}</button>
       <div class="vh-titles"><h2 class="v-title">Settings</h2><span class="v-sub">Saved instantly</span></div>
     </header>
-    <div class="v-body"><div class="set-cols">
+    <div class="set-board" id="setBoard">
+      <button class="set-tile tone-orange press" type="button" data-open="skip" data-stagger style="grid-area: skip">${icon('back')}<span class="st-lbl">Skip buttons</span><span class="st-big" id="tsSkip"></span><span class="st-sub" id="tsSkipSub"></span></button>
+      <button class="set-tile tone-gray press" type="button" data-open="play" data-stagger style="grid-area: play">${icon('gauge')}<span class="st-lbl">Playback</span><span class="st-big" id="tsPlay"></span><span class="st-sub" id="tsPlaySub"></span></button>
+      <button class="set-tile tone-clay press" type="button" data-open="via" data-stagger style="grid-area: via">${icon('server')}<span class="st-lbl">Source</span><span class="st-big" id="tsVia"></span><span class="st-sub" id="tsViaSub"></span></button>
+      <button class="set-tile tone-sage press" type="button" data-open="ios" data-stagger style="grid-area: ios">${icon('phone')}<span class="st-lbl">iPhone setup</span><span class="st-big">5 steps</span><span class="st-sub">One-time setup · no computer</span></button>
+      <button class="set-tile tone-khaki press" type="button" data-open="dl" data-stagger style="grid-area: dl">${icon('download')}<span class="st-lbl">Quality</span><span class="st-big" id="tsDl"></span><span class="st-sub" id="tsDlSub"></span></button>
+      <button class="set-tile tone-stone press" type="button" data-open="install" data-stagger style="grid-area: inst">${icon('add-box')}<span class="st-lbl">Install</span><span class="st-big" id="tsInst"></span><span class="st-sub" id="tsInstSub"></span></button>
+      <button class="set-tile tone-silver press" type="button" data-open="store" data-stagger style="grid-area: store">${icon('folder')}<span class="st-lbl">Storage</span><span class="st-big" id="tsStore">—</span><span class="st-sub" id="tsStoreSub"></span></button>
+      <button class="set-tile tone-ink press" type="button" data-open="about" data-stagger style="grid-area: about">${icon('info')}<span class="st-lbl">About</span><span class="st-big">Build ${BUILD}</span><span class="st-sub">Report · keys</span></button>
+    </div>
+    <section class="set-detail" id="setDetail" hidden>
+      <header class="sd-head"><button class="back-btn press" type="button" id="sdBack" aria-label="Back to settings">${tulip()}</button><h3 class="v-title sd-title" id="sdTitle"></h3></header>
+      <div class="sd-body" id="sdBody"></div>
+    </section>
+    <div class="set-store" id="setStore" hidden>
 
-      <section class="set-card tone-orange" data-stagger>
+      <section class="set-card tone-orange" data-card="skip" data-title="Skip buttons">
         <h3 class="tile-h">Skip buttons</h3>
         <p class="set-hint">How far ↺ and ↻ jump — in the app, on the lock screen and with headphones.</p>
         <div class="skip-set">
@@ -80,7 +95,7 @@ export function mount(el) {
         </div>
       </section>
 
-      <section class="set-card tone-stone install" data-stagger>
+      <section class="set-card tone-stone install" data-card="install" data-title="Home Screen">
         <div class="inst-head">
           <h3 class="tile-h">Add to Home Screen</h3>
           <span class="inst-detect">${device.standalone ? `${icon('check')} Installed` : os === 'desktop' ? 'On a computer' : `Detected: ${os === 'ios' ? 'iPhone' : 'Android'}`}</span>
@@ -96,14 +111,14 @@ export function mount(el) {
         ${os === 'desktop' ? `<p class="set-hint">On a computer: in Chrome or Edge, click the install icon at the right end of the address bar.</p>` : ''}
       </section>
 
-      <section class="set-card tone-khaki sc-guide" data-stagger id="scGuide" ${os === 'android' && s.fetchVia !== 'shortcut' ? 'hidden' : ''}>
+      <section class="set-card tone-sage sc-guide" id="scGuide" data-card="ios" data-title="iPhone downloader">
         <div class="inst-head"><h3 class="tile-h">iPhone downloader</h3><span class="inst-detect">No computer needed</span></div>
         <p class="set-hint">Downloads happen on the phone with two free apps. One-time setup, about five minutes.</p>
         <ol class="steps sc-steps" id="scSteps">${shortcutGuide(s.shortcutName)}</ol>
         <p class="set-hint">If YouTube stops working, run step 2 again to update the downloader.</p>
       </section>
 
-      <section class="set-card tone-paper2" data-stagger>
+      <section class="set-card tone-gray" data-card="play" data-title="Playback">
         <h3 class="tile-h">Playback</h3>
         <label class="row-toggle"><span><b>Autoplay next</b><small>Keep going through the list when one ends</small></span><span class="switch"><input type="checkbox" data-k="autoplay" ${s.autoplay ? 'checked' : ''}><i></i></span></label>
         ${player.P.volumeSupported ? `<label class="row-toggle"><span><b>Fade out on sleep</b><small>Volume eases down in the last 30 seconds</small></span><span class="switch"><input type="checkbox" data-k="sleepFade" ${s.sleepFade ? 'checked' : ''}><i></i></span></label>` : ''}
@@ -120,7 +135,7 @@ export function mount(el) {
         <div class="row-toggle"><span><b>Speed</b><small>Applies to everything you play</small></span><span class="speed-pills" id="speedPills">${[1, 1.25, 1.5, 2].map((v) => `<button type="button" class="chip sm press ${s.speed === v ? 'on' : ''}" data-v="${v}">${v}×</button>`).join('')}</span></div>
       </section>
 
-      <section class="set-card tone-silver" data-stagger>
+      <section class="set-card tone-khaki" data-card="dl" data-title="Downloads">
         <h3 class="tile-h">Downloads</h3>
         <div class="row-toggle col"><span><b>Audio quality</b><small>Smaller files fit more on your phone</small></span>
           <div class="seg full" id="qualSeg"><i class="seg-pill" aria-hidden="true"></i>
@@ -133,7 +148,7 @@ export function mount(el) {
         <label class="row-toggle"><span><b>Auto-file by channel</b><small>New audio joins the playlist its channel usually goes in</small></span><span class="switch"><input type="checkbox" data-k="autoFile" ${s.autoFile ? 'checked' : ''}><i></i></span></label>
       </section>
 
-      <section class="set-card tone-sage" data-stagger>
+      <section class="set-card tone-silver" data-card="store" data-title="Storage">
         <h3 class="tile-h">On this device</h3>
         <div class="store-big"><span id="stUsed">—</span></div>
         <div class="store-bar"><i id="stBar"></i></div>
@@ -144,7 +159,7 @@ export function mount(el) {
         </div>
       </section>
 
-      <section class="set-card tone-clay" data-stagger>
+      <section class="set-card tone-clay" data-card="via" data-title="Downloader">
         <h3 class="tile-h">Downloader</h3>
         <div class="seg inv full" id="viaSeg"><i class="seg-pill" aria-hidden="true"></i>
           <button type="button" data-via="auto">Auto</button>
@@ -166,7 +181,7 @@ export function mount(el) {
         </div>
       </section>
 
-      <section class="set-card tone-ink about" data-stagger>
+      <section class="set-card tone-ink about" data-card="about" data-title="About Earmark">
         <h3 class="tile-h">Earmark</h3>
         <p class="set-hint">Paste a link, keep the audio, listen like a podcast. Your library, marks and notes live only on this device.</p>
         ${os === 'desktop' ? '<p class="set-hint dim">Keys: Space play/pause · ← → skip · Shift → next · M mark · F favourite</p>' : ''}
@@ -175,10 +190,72 @@ export function mount(el) {
           <span class="build">Build ${BUILD}</span>
         </div>
       </section>
-    </div></div>`;
+    </div>`;
 
   const q = (sel) => el.querySelector(sel);
   el.querySelector('.back-btn').addEventListener('click', closeView);
+
+  /* ── the board: every section is a tile; tapping one grows it into its full panel ── */
+  const detail = q('#setDetail');
+  const sdBody = q('#sdBody');
+  const store = q('#setStore');
+  let openCard = null; // { card, tile, close }
+  function openPanel(tile) {
+    if (openCard) return;
+    const card = store.querySelector(`[data-card="${tile.dataset.open}"]`);
+    if (!card) return;
+    const tone = [...card.classList].find((c) => c.startsWith('tone-')) || '';
+    detail.className = `set-detail ${tone}`;
+    q('#sdTitle').textContent = card.dataset.title;
+    sdBody.append(card);
+    sdBody.scrollTop = 0;
+    detail.hidden = false;
+    detail.style.zIndex = '3'; // the growing surface slides in underneath it
+    expandFrom(detail, tile, el.getBoundingClientRect(), 10);
+    stagger(card.children, { delay: 160, y: 10, step: 35 });
+    openCard = { card, tile };
+    openCard.close = pushLayer(() => closePanel(), 'settings-panel');
+    requestAnimationFrame(placeAllSegs);
+  }
+  async function closePanel() {
+    const o = openCard;
+    if (!o) return;
+    openCard = null;
+    detail.style.pointerEvents = 'none';
+    await collapseTo(detail, o.tile, el.getBoundingClientRect(), 10);
+    detail.hidden = true;
+    detail.style.pointerEvents = '';
+    detail.getAnimations().forEach((a) => a.cancel());
+    store.append(o.card);
+    renderTiles();
+  }
+  q('#setBoard').addEventListener('click', (e) => {
+    const t = e.target.closest('[data-open]');
+    if (t) openPanel(t);
+  });
+  q('#sdBack').addEventListener('click', () => openCard?.close());
+
+  const quality = { low: '64k', standard: '128k', high: '192k' };
+  function renderTiles() {
+    const st = state.settings;
+    setText(q('#tsSkip'), st.skipBack === st.skipFwd ? `${st.skipBack}s` : `${st.skipBack}·${st.skipFwd}s`);
+    setText(q('#tsSkipSub'), `Back ${st.skipBack}s · forward ${st.skipFwd}s`);
+    setText(q('#tsPlay'), `${(Math.round(st.speed * 100) / 100).toString()}×`);
+    setText(q('#tsPlaySub'), [st.sfx ? 'Sounds on' : 'Sounds off', st.autoplay ? 'autoplay' : 'one at a time'].join(' · '));
+    const v = st.fetchVia || 'auto';
+    setText(q('#tsVia'), v === 'shortcut' ? 'Shortcut' : v === 'server' ? 'Server' : 'Auto');
+    setText(q('#tsViaSub'), fetchMode() === 'shortcut' ? 'Using the iPhone Shortcut' : state.server.online ? 'Server connected' : 'Server not reachable');
+    setText(q('#tsDl'), quality[st.quality] || '128k');
+    setText(q('#tsDlSub'), st.autoFetch ? 'Fetches on paste' : 'Tap to fetch');
+    setText(q('#tsInst'), device.standalone ? 'Installed' : 'Add');
+    setText(q('#tsInstSub'), device.standalone ? 'Running as an app' : os === 'desktop' ? 'Install from the browser' : `Steps for ${os === 'ios' ? 'iPhone' : 'Android'}`);
+  }
+  const placeAllSegs = () => {
+    placeSeg(qual, qual.querySelector(`[data-q="${state.settings.quality}"]`) || qual.querySelector('[data-q="standard"]'), false);
+    placeSeg(tabs, tabs.querySelector(`[data-g="${guide}"]`), false);
+    placeSeg(via, via.querySelector(`[data-via="${state.settings.fetchVia || 'auto'}"]`), false);
+    if (lock) placeSeg(lock, lock.querySelector(`[data-l="${state.settings.lockButtons === 'tracks' ? 'tracks' : 'skip'}"]`), false);
+  };
 
   /* skip sliders */
   const sbRoll = new Roller(q('#sbVal'));
@@ -300,6 +377,8 @@ export function mount(el) {
   async function renderStorage() {
     const mine = [...state.blobs.values()].reduce((n, b) => n + (b?.size || 0), 0);
     q('#stUsed').innerHTML = `${fmtBytes(mine).replace(/ (\w+)$/, '<em> $1</em>')}`;
+    setText(q('#tsStore'), fmtBytes(mine));
+    setText(q('#tsStoreSub'), `${state.tracks.length} audio${state.tracks.length === 1 ? '' : 's'} on this phone`);
     let quota = 0;
     let persisted = false;
     try {
@@ -353,7 +432,6 @@ export function mount(el) {
     };
     if (animate && (grpS.hidden === showS || grpV.hidden === showV)) swap(via.parentElement, apply);
     else apply();
-    if (os === 'android') q('#scGuide').hidden = set !== 'shortcut';
   }
   via.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-via]');
@@ -427,17 +505,13 @@ export function mount(el) {
     emit('server:recheck');
   });
 
-  const offs = [on('server', renderServer), on('server', () => renderVia(false)), on('installable', showInstall), on('tracks', renderStorage)];
+  const offs = [on('server', renderServer), on('server', () => renderVia(false)), on('server', renderTiles), on('settings', renderTiles), on('installable', showInstall), on('tracks', renderStorage)];
+  renderTiles();
   renderSteps(false);
   renderServer();
   renderVia(false);
   renderStorage();
-  requestAnimationFrame(() => {
-    placeSeg(qual, qual.querySelector(`[data-q="${s.quality}"]`) || qual.querySelector('[data-q="standard"]'), false);
-    placeSeg(tabs, tabs.querySelector(`[data-g="${guide}"]`), false);
-    placeSeg(via, via.querySelector(`[data-via="${s.fetchVia || 'auto'}"]`), false);
-    if (lock) placeSeg(lock, lock.querySelector(`[data-l="${s.lockButtons === 'tracks' ? 'tracks' : 'skip'}"]`), false);
-  });
+
 
   return {
     unmount() {

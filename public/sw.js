@@ -1,6 +1,6 @@
 // Offline shell. Network-first (fresh when online, instant fallback when not).
 // Audio never goes through here — it lives in IndexedDB.
-const VERSION = 'earmark-v5'; // keep in step with BUILD in js/util.js
+const VERSION = 'earmark-v6'; // keep in step with BUILD in js/util.js
 // Paths are relative so the app works at the site root or in a sub-folder (e.g. GitHub Pages).
 const ROOT = new URL('./', self.location).href;
 const SHELL = [
@@ -61,10 +61,89 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+/* ───────────── audio, served like a web server would ─────────────
+   An iPhone's player only skips and resumes properly in audio it can fetch piece by piece
+   ("byte ranges"). Saved audio lives in IndexedDB, so it is served from there at
+   media/<id>, answering each range request with exactly the bytes asked for. */
+const MEDIA = `${ROOT}media/`;
+let dbp = null;
+function db() {
+  if (dbp) return dbp;
+  dbp = new Promise((resolve, reject) => {
+    const r = indexedDB.open('earmark');
+    // Never create the database from here: that's the app's job.
+    r.onupgradeneeded = () => r.transaction.abort();
+    r.onsuccess = () => {
+      const d = r.result;
+      d.onversionchange = () => {
+        d.close();
+        dbp = null;
+      };
+      resolve(d);
+    };
+    r.onerror = () => {
+      dbp = null;
+      reject(r.error);
+    };
+  });
+  return dbp;
+}
+async function storedBlob(id) {
+  const d = await db();
+  return new Promise((resolve, reject) => {
+    const q = d.transaction('blobs').objectStore('blobs').get(id);
+    q.onsuccess = () => resolve(q.result?.blob || null);
+    q.onerror = () => reject(q.error);
+  });
+}
+async function sniff(blob) {
+  const b = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+  const s = String.fromCharCode(...b);
+  if (s.slice(4, 8) === 'ftyp') return 'audio/mp4';
+  if (s.startsWith('ID3') || (b[0] === 0xff && (b[1] & 0xe0) === 0xe0)) return 'audio/mpeg';
+  if (s.startsWith('RIFF')) return 'audio/wav';
+  if (s.startsWith('OggS')) return 'audio/ogg';
+  if (s.startsWith('fLaC')) return 'audio/flac';
+  return blob.type || 'audio/mpeg';
+}
+let held = null; // { id, size, blob, type } — the audio being played, kept handy
+async function media(req, url) {
+  const id = decodeURIComponent(url.pathname.slice(new URL(MEDIA).pathname.length));
+  if (id === 'ping') return new Response(null, { status: 204, headers: { 'x-earmark-media': '1' } });
+  const want = Number(url.searchParams.get('s')) || 0;
+  if (!held || held.id !== id || (want && held.size !== want)) {
+    const blob = await storedBlob(id).catch(() => null);
+    if (!blob) return new Response('not found', { status: 404 });
+    held = { id, size: blob.size, blob, type: await sniff(blob).catch(() => blob.type || 'audio/mpeg') };
+  }
+  const { blob, size, type } = held;
+  const base = { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' };
+  const m = /bytes=(\d*)-(\d*)/.exec(req.headers.get('range') || '');
+  if (!m) return new Response(blob, { status: 200, headers: { ...base, 'Content-Length': String(size) } });
+  let start;
+  let end;
+  if (m[1] === '') {
+    start = Math.max(0, size - Number(m[2] || 0));
+    end = size - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+  }
+  if (start >= size || end < start) return new Response(null, { status: 416, headers: { ...base, 'Content-Range': `bytes */${size}` } });
+  return new Response(blob.slice(start, end + 1, type), {
+    status: 206,
+    headers: { ...base, 'Content-Length': String(end - start + 1), 'Content-Range': `bytes ${start}-${end}/${size}` },
+  });
+}
+
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  if (url.href.startsWith(MEDIA)) {
+    e.respondWith(media(req, url).catch(() => new Response('error', { status: 500 })));
+    return;
+  }
   if (url.origin !== self.location.origin || !url.href.startsWith(ROOT) || url.href.startsWith(`${ROOT}api/`)) return;
 
   const isNav = req.mode === 'navigate';

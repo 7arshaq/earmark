@@ -2,9 +2,9 @@
 // queue + "play next", sleep timer, resume, listening stats.
 import { state, on, emit, getTrack, getPlaylist, saveTrack, saveTrackSoon, saveSession, addListen, setSetting, continueTrack, MARK_COLORS } from './store.js';
 import { get as dbGet } from './db.js';
-import { playable, liveCopy, keepOnly, forget } from './media.js';
 import { artworkFor } from './artwork.js';
 import { clamp, uid, device } from './util.js';
+import { playable, keepOnly, forget } from './media.js';
 
 const audio = document.getElementById('audio');
 export const audioEl = audio;
@@ -26,7 +26,7 @@ let sleepTimer = null;
 
 export const current = () => (P.id ? getTrack(P.id) : null);
 export const isPlaying = () => Boolean(P.id) && !audio.paused && !audio.ended;
-export const time = () => trusted();
+export const time = () => (pending ? pending.t : trustedTime());
 export const duration = () => (Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : current()?.duration || 0);
 
 // iOS ignores element volume (hardware buttons only) — detect instead of pretending.
@@ -39,91 +39,153 @@ try {
   P.volumeSupported = false;
 }
 
-/* ───────────── seeking ─────────────
-   A jump isn't done until the element says so. iOS drops a seek made before the file's
-   header has loaded (which only happens after the first tap on play), so the wanted
-   position is kept and re-applied until it lands — and the display shows it meanwhile. */
+/* ───────────── where the sound comes from ─────────────
+   An iPhone's player only jumps around properly in audio it can ask for piece by piece, the
+   way a web server hands out a file ("byte ranges"). Audio handed over as one block of
+   stored data plays, but skipping and resuming silently do nothing — which is what kept
+   happening. So the audio is served to the player at an ordinary address by the app's own
+   service worker (sw.js), straight out of the device's storage, in pieces, like a server.
 
-let want = null; // { t, tries, start, ticks }
+   If that isn't available, or a jump still doesn't land, the player falls back to a copy in
+   memory, then to the stored file as it is. Each audio remembers what worked for it. */
+
+const ROOT = new URL('./', location.href).href;
+const MODES = ['sw', 'mem', 'file'];
+let swMedia = false;
+const modeFor = new Map(); // id → mode that is known to work (or is being tried)
+
+// Is the media-serving service worker in charge of this page?
+async function checkSW() {
+  try {
+    if (!navigator.serviceWorker?.controller) return (swMedia = false);
+    const r = await fetch(`${ROOT}media/ping`, { cache: 'no-store' });
+    swMedia = r.headers.get('x-earmark-media') === '1';
+  } catch {
+    swMedia = false;
+  }
+  return swMedia;
+}
+export const swReady = checkSW();
+navigator.serviceWorker?.addEventListener?.('controllerchange', checkSW);
+
+const firstMode = () => (swMedia ? 'sw' : 'mem');
+const modeOf = (id) => modeFor.get(id) || firstMode();
+
+/** Point the element at the audio, starting at `at` seconds. */
+async function attach(id, at, mode) {
+  const blob = state.blobs.get(id);
+  let url;
+  if (mode === 'sw') {
+    url = `${ROOT}media/${encodeURIComponent(id)}?s=${blob?.size || 0}`;
+  } else {
+    let b = blob;
+    if (mode === 'mem') {
+      try {
+        b = await playable(id);
+      } catch {
+        b = blob;
+      }
+    } else {
+      try {
+        b = (await dbGet('blobs', id))?.blob || blob;
+      } catch {}
+    }
+    if (P.id !== id) return false;
+    if (!b) return false;
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = URL.createObjectURL(b);
+    url = objectUrl;
+  }
+  if (mode === 'sw' && objectUrl) {
+    URL.revokeObjectURL(objectUrl);
+    objectUrl = null;
+  }
+  P.ready = false;
+  loadingOurs = true;
+  // "#t=" asks the player to start there itself; the jump below makes sure of it.
+  audio.src = at > 0.5 ? `${url}#t=${at.toFixed(2)}` : url;
+  audio.defaultPlaybackRate = state.settings.speed;
+  audio.playbackRate = state.settings.speed;
+  audio.preservesPitch = true;
+  return true;
+}
+
+/* ───────────── jumping ─────────────
+   A jump is only done when the player says it is there. Until then the screen and the lock
+   screen show where it is going; if it never gets there the next way of playing is tried. */
+
+let pending = null; // { t, tries, since }
+let lastGood = 0; // the last position known to be right
+let asked = false; // playback was asked for and nothing has stopped it since
+let loadingOurs = false; // the current load was started here (not by the phone)
 let noSeekFor = null;
 let swapWhenQuiet = false;
-let prep = null; // id whose in-memory copy is still being read; a silenced stand-in plays meanwhile
-let asked = false; // playback was asked for and nothing has stopped it since
-let lastGood = 0; // the last position known to be right
-let ownLoadUntil = 0; // loads started here, as opposed to the phone starting the audio over
-let rebuiltFor = null; // one automatic recovery per audio until it plays again
-let warmTimer = null;
 
-// Short silences of our own making (while a copy is prepared, while the opening jump lands)
-// so you never hear a second of the wrong place. Each reason is lifted separately.
-const quiet = new Set();
-let wasMuted = false;
-function hush(why, ms = 0) {
-  if (!quiet.size) wasMuted = audio.muted;
-  quiet.add(why);
-  audio.muted = true;
-  if (ms) setTimeout(() => unhush(why), ms);
-}
-function unhush(why) {
-  if (!quiet.delete(why) || quiet.size) return;
-  audio.muted = wasMuted;
-}
-function unhushAll() {
-  if (!quiet.size) return;
-  quiet.clear();
-  audio.muted = wasMuted;
-}
-
-/**
- * Where the audio really is. The element is believed unless it has plainly been restarted
- * under us: an iPhone can drop a paused audio's place (after a long time in the background,
- * a call, low memory) and report 0. Then the last good position is the truth.
- */
-function trusted() {
-  if (want) return want.t;
-  if (prep) return lastGood;
+/** The element's time, unless the phone has plainly thrown our place away (it reports 0). */
+function trustedTime() {
   const ct = audio.currentTime || 0;
   return lastGood > 5 && ct < 1.5 && lastGood - ct > 4 ? lastGood : ct;
 }
 
-function wantSeek(target, start = false) {
-  want = { t: target, tries: 0, start, ticks: 0 };
-  if (start && (asked || !audio.paused)) hush('seek', 2500);
-  trySeek();
+function jump(t) {
+  pending = { t, tries: 0, since: 0 };
+  apply();
 }
 
-/** Does the browser say this moment can be jumped to yet? (It may need more of the file first.) */
-function reachable(t) {
-  const s = audio.seekable;
-  for (let i = 0; i < (s?.length || 0); i++) if (t >= s.start(i) - 0.5 && t <= s.end(i) + 0.5) return true;
-  return false;
-}
-
-function trySeek() {
-  const w = want;
-  if (!w || prep || audio.readyState < 1 || audio.seeking) return;
-  if (Math.abs(audio.currentTime - w.t) < 0.6) return landed(true);
-  // Not reachable yet: wait for the browser instead of burning attempts. After a couple of
-  // seconds of actual playback, try regardless (some browsers under-report this).
-  if (!reachable(w.t) && w.ticks < 10) return;
-  if (w.tries >= 6) return landed(false);
-  w.tries++;
+function apply() {
+  const p = pending;
+  if (!p || audio.readyState < 1) return; // the phone loads nothing until play is pressed
+  if (Math.abs(audio.currentTime - p.t) < 0.75) return arrived(true);
+  if (audio.seeking) return;
+  if (!p.since) p.since = performance.now();
+  if (p.tries >= 3) return arrived(false);
+  p.tries++;
   try {
-    audio.currentTime = w.t;
+    audio.currentTime = p.t;
   } catch {}
 }
 
-function landed(ok) {
-  const w = want;
-  want = null;
-  unhush('seek');
-  if (ok && w) lastGood = w.t;
-  if (!ok && w && P.id && noSeekFor !== P.id) {
-    noSeekFor = P.id;
-    emit('player:noseek', { id: P.id });
+// A jump that doesn't land within a few seconds of the player being ready counts as failed.
+setInterval(() => {
+  const p = pending;
+  if (p && p.since && audio.readyState >= 1 && performance.now() - p.since > (audio.paused ? 6000 : 3500)) arrived(false);
+}, 700);
+
+function arrived(ok) {
+  const p = pending;
+  pending = null;
+  if (ok) {
+    lastGood = p.t;
+    if (P.id) modeFor.set(P.id, modeOf(P.id));
+  } else if (p && P.id) {
+    // This way of playing can't jump: try the next one, from the place we wanted.
+    const i = MODES.indexOf(modeOf(P.id));
+    if (i < MODES.length - 1) {
+      modeFor.set(P.id, MODES[i + 1]);
+      lastGood = p.t;
+      reattach(p.t);
+      return;
+    }
+    if (noSeekFor !== P.id) {
+      noSeekFor = P.id;
+      emit('player:noseek', { id: P.id });
+    }
   }
   updatePositionState();
   emit('player:time', { seek: true });
+}
+
+/** Reload the current audio (new way of playing, or a repaired file) without losing the place. */
+async function reattach(at = time()) {
+  const id = P.id;
+  if (!id) return;
+  const resume = asked || !audio.paused;
+  pending = null;
+  const ok = await attach(id, at, modeOf(id));
+  if (!ok || P.id !== id) return;
+  if (at > 0.5) jump(at);
+  if (resume) play();
+  emit('player:state');
 }
 
 /* ───────────── loading & transport ───────────── */
@@ -131,10 +193,8 @@ function landed(ok) {
 export function load(id, { autoplay = true, at = null, context = null, noHistory = false } = {}) {
   const t = getTrack(id);
   if (!t) return false;
-  const copy = liveCopy(id);
-  const blob = copy || state.blobs.get(id);
-  if (!blob) {
-    // Not cached in memory (rare) — fetch from IndexedDB, then retry.
+  if (!state.blobs.get(id)) {
+    // Not known in memory (rare) — look in storage, then retry.
     dbGet('blobs', id).then((row) => {
       if (row?.blob) {
         state.blobs.set(id, row.blob);
@@ -161,19 +221,23 @@ export function load(id, { autoplay = true, at = null, context = null, noHistory
     t.position = 0;
   }
   P.id = id;
-  want = null;
-  unhushAll();
+  pending = null;
   lastGood = start;
-  // Play from a copy held in memory (see media.js). Until it is ready — a moment — the
-  // stored file stands in, silenced, so the tap that started this still counts as the
-  // "user pressed play" a phone insists on.
-  prep = copy ? null : id;
-  setSource(blob);
-  if (start > 0.5) wantSeek(start, true);
-  if (prep) {
-    hush('prep', 12000);
-    fetchCopy(id);
-  } else warmNext();
+  keepOnly([id]);
+
+  const mode = modeOf(id);
+  const go = () => {
+    if (start > 0.5) jump(start);
+    if (autoplay) play();
+    else emit('player:state');
+  };
+  if (mode === 'sw') {
+    attach(id, start, mode); // synchronous for this mode: play() stays inside the tap
+    go();
+  } else {
+    if (start > 0.5) pending = { t: start, tries: 0, since: 0 };
+    attach(id, start, mode).then((ok) => ok && P.id === id && go());
+  }
 
   t.lastPlayedAt = Date.now();
   saveTrack(t, { silent: true });
@@ -181,8 +245,6 @@ export function load(id, { autoplay = true, at = null, context = null, noHistory
   setMetadata(t);
   emit('player:load', t);
   emit('player:queue');
-  if (autoplay) play();
-  else emit('player:state');
   return true;
 }
 
@@ -193,15 +255,12 @@ export function play() {
     return;
   }
   asked = true;
-  if (audio.error) return recover();
   // If the phone dropped our place while the audio sat paused, go back to it first.
-  if (!want && !prep && audio.readyState > 0 && lastGood > 5 && (audio.currentTime || 0) < 1.5) wantSeek(lastGood, true);
-  if (want?.start) hush('seek', 2500);
+  if (!pending && lastGood > 5 && (audio.currentTime || 0) < 1.5) jump(lastGood);
   const p = audio.play();
   p?.catch?.((err) => {
     if (err?.name !== 'NotAllowedError') return; // "interrupted by a new load" is us swapping sources
     asked = false;
-    unhushAll();
     emit('player:blocked');
   });
 }
@@ -216,7 +275,7 @@ export function seek(t) {
   const d = duration();
   const target = d > 0 ? clamp(t, 0, Math.max(0, d - 0.25)) : Math.max(0, t);
   lastGood = target;
-  wantSeek(target);
+  jump(target);
   const tr = current();
   if (tr && tr.finished && target < d - 2) tr.finished = false;
   commitPosition();
@@ -273,111 +332,27 @@ export function prev() {
   load(id, { autoplay: true, noHistory: true });
 }
 
-function setSource(blob) {
-  if (objectUrl) URL.revokeObjectURL(objectUrl);
-  objectUrl = URL.createObjectURL(blob);
-  ownLoadUntil = performance.now() + 1500;
-  P.ready = false;
-  audio.src = objectUrl;
-  audio.defaultPlaybackRate = state.settings.speed;
-  audio.playbackRate = state.settings.speed;
-  audio.preservesPitch = true;
-}
-
-/** Swap the silenced stand-in for the in-memory copy as soon as it has been read. */
-function fetchCopy(id) {
-  playable(id).then(
-    (blob) => {
-      if (P.id !== id || prep !== id) return;
-      prep = null;
-      const at = want ? want.t : lastGood;
-      const resume = asked;
-      if (blob !== state.blobs.get(id)) {
-        want = null;
-        setSource(blob);
-        if (at > 0.5) wantSeek(at, true);
-        if (resume) play();
-      } else trySeek(); // a huge file is played as stored
-      unhush('prep');
-      emit('player:state');
-      warmNext();
-    },
-    () => {
-      if (prep !== id) return;
-      prep = null; // no copy could be made: carry on with the stored file as it is
-      unhush('prep');
-      trySeek();
-    },
-  );
-}
-
-/** The audio died (its source went away while the app slept): rebuild it from storage once. */
-function recover() {
-  const id = P.id;
-  if (!id || prep === id) return;
-  if (rebuiltFor === id) {
-    asked = false;
-    unhushAll();
-    emit('player:error', { message: "This audio couldn't be played." });
-    emit('player:state');
-    return;
-  }
-  rebuiltFor = id;
-  forget(id);
-  prep = id;
-  hush('prep', 12000);
-  fetchCopy(id);
-}
-
-/** Have the next audio's copy ready before it is needed, so the hand-over is instant
- *  (it has to be, behind a locked screen). Everything older is let go. */
-function warmNext() {
-  clearTimeout(warmTimer);
-  warmTimer = setTimeout(() => {
-    if (!P.id) return;
-    const nid = P.queue.find((q) => q !== P.id && getTrack(q)) || (state.settings.autoplay ? contextNext() : null);
-    keepOnly([P.id, nid].filter(Boolean));
-    const size = nid ? state.blobs.get(nid)?.size || 0 : 0;
-    if (nid && size && size < 300 * 1048576) playable(nid).catch(() => {});
-  }, 2500);
-}
+function warmNext() {}
 
 /** The stored file was replaced (made skippable): switch to it without losing the place. */
 function reloadSource() {
-  const id = P.id;
-  const copy = id && liveCopy(id);
-  const blob = copy || (id && state.blobs.get(id));
-  if (!blob) return;
+  if (!P.id) return;
   if (!audio.paused && document.hidden) {
     swapWhenQuiet = true; // never interrupt audio playing behind the lock screen
     return;
   }
   swapWhenQuiet = false;
-  const at = time();
-  const resume = asked || !audio.paused;
   noSeekFor = null;
-  want = null;
-  unhushAll();
-  lastGood = at;
-  prep = copy ? null : id;
-  setSource(blob);
-  if (at > 0.5) wantSeek(at, true);
-  if (prep) {
-    hush('prep', 12000);
-    fetchCopy(id);
-  }
-  if (resume) play();
-  emit('player:state');
+  forget(P.id);
+  modeFor.delete(P.id);
+  reattach(time());
 }
 on('blob', (d) => d?.id === P.id && reloadSource());
 
 export function unload() {
-  want = null;
-  prep = null;
+  pending = null;
   asked = false;
   lastGood = 0;
-  unhushAll();
-  clearTimeout(warmTimer);
   keepOnly([]);
   audio.pause();
   audio.removeAttribute('src');
@@ -403,7 +378,7 @@ export function playFrom(id, ids, label) {
 function commitPosition() {
   const t = current();
   if (!t) return;
-  if (want || prep || P.ready) t.position = trusted();
+  if (pending || P.ready) t.position = time();
   saveTrack(t, { silent: true });
 }
 
@@ -471,8 +446,7 @@ export function setVolume(v) {
 }
 export const commitVolume = () => setSetting('volume', baseVolume);
 export function toggleMute() {
-  if (quiet.size) wasMuted = !wasMuted;
-  else audio.muted = !audio.muted;
+  audio.muted = !audio.muted;
   emit('player:volume');
 }
 
@@ -613,11 +587,12 @@ function bindMediaKeys() {
 }
 on('settings', (d) => d?.k === 'lockButtons' && bindMediaKeys());
 
+
 /* ───────────── element events ───────────── */
 
 audio.addEventListener('loadedmetadata', () => {
   P.ready = true;
-  trySeek();
+  apply();
   audio.playbackRate = state.settings.speed;
   const t = current();
   if (t && Number.isFinite(audio.duration) && Math.abs((t.duration || 0) - audio.duration) > 1) {
@@ -628,32 +603,32 @@ audio.addEventListener('loadedmetadata', () => {
   emit('player:time');
 });
 
-for (const ev of ['loadeddata', 'canplay', 'playing', 'seeked']) audio.addEventListener(ev, trySeek);
+for (const ev of ['loadeddata', 'canplay', 'playing', 'seeked']) audio.addEventListener(ev, apply);
 
-// The phone started loading the audio again by itself: it threw it away while the app was
-// in the background. Whatever it reports next, head back to where we were.
+// The phone started loading the audio again by itself (it threw it away while the app was in
+// the background). Whatever it reports next, head back to where we were.
 audio.addEventListener('loadstart', () => {
-  if (!P.id || performance.now() < ownLoadUntil) return;
+  if (loadingOurs) {
+    loadingOurs = false;
+    return;
+  }
+  if (!P.id) return;
   P.ready = false;
-  if (!want && lastGood > 1) want = { t: lastGood, tries: 0, start: true, ticks: 0 };
+  if (!pending && lastGood > 1) pending = { t: lastGood, tries: 0, since: 0 };
 });
 
 audio.addEventListener('timeupdate', () => {
   const t = current();
-  if (!t || prep) return;
-  if (want) {
-    // Counted in playback ticks (about four a second), so time spent paused never counts
-    // against a jump that is simply waiting for the file to load.
-    want.ticks++;
-    trySeek();
-    if (want && want.ticks > 28) landed(false); // ~7 s of playing and still not there
-    if (want) return; // still on its way: don't overwrite the place we're heading to
+  if (!t) return;
+  if (pending) {
+    apply();
+    if (pending) return; // still on its way: don't overwrite the place we're heading to
   }
   if (!P.ready) return;
   // Playing from the start although we were far in, and nobody asked for that: the phone
   // restarted the audio. Go back instead of saving "0:00" over the real place.
   if (!audio.seeking && lastGood > 5 && audio.currentTime < 1.5 && lastGood - audio.currentTime > 4) {
-    wantSeek(lastGood, true);
+    jump(lastGood);
     return;
   }
   lastGood = audio.currentTime;
@@ -681,17 +656,13 @@ audio.addEventListener('play', () => {
 audio.addEventListener('pause', () => {
   lastTick = 0;
   asked = false;
-  unhush('seek');
   commitPosition();
   if (swapWhenQuiet) reloadSource();
   if (ms) ms.playbackState = 'paused';
   emit('player:state');
 });
 audio.addEventListener('waiting', () => emit('player:state'));
-audio.addEventListener('playing', () => {
-  rebuiltFor = null;
-  emit('player:state');
-});
+audio.addEventListener('playing', () => emit('player:state'));
 audio.addEventListener('ratechange', updatePositionState);
 audio.addEventListener('ended', () => {
   const t = current();
@@ -710,8 +681,20 @@ audio.addEventListener('ended', () => {
   }
   if (!next({ auto: true })) emit('player:state');
 });
+
+// The audio couldn't be loaded this way (or its source died while the app slept): try the next way.
 audio.addEventListener('error', () => {
-  if (P.id) recover();
+  const id = P.id;
+  if (!id || !audio.getAttribute('src')) return;
+  const i = MODES.indexOf(modeOf(id));
+  if (i < MODES.length - 1) {
+    modeFor.set(id, MODES[i + 1]);
+    reattach(pending ? pending.t : lastGood);
+    return;
+  }
+  asked = false;
+  emit('player:error', { message: "This audio couldn't be played." });
+  emit('player:state');
 });
 
 document.addEventListener('visibilitychange', () => {
@@ -731,24 +714,26 @@ export function report() {
     for (let i = 0; i < (r?.length || 0); i++) out.push(`${r.start(i).toFixed(1)}–${r.end(i).toFixed(1)}`);
     return out.join(' ') || 'none';
   };
+  const names = { sw: 'served in pieces', mem: 'memory copy', file: 'stored file' };
   return [
     `track: ${t ? `${t.title} (${t.source || 'file'})` : 'none'}`,
     `file: ${blob ? `${blob.type || '?'} · ${(blob.size / 1048576).toFixed(1)} MB · checked ${t.cx ?? 'no'}` : 'none'}`,
-    `source: ${prep ? 'stand-in while the copy is read' : t && liveCopy(t.id) ? `memory copy (${liveCopy(t.id).type})` : 'stored file'} · last good ${lastGood.toFixed(1)}${quiet.size ? ` · silenced for ${[...quiet].join('+')}` : ''}`,
+    `source: ${t ? names[modeOf(t.id)] : '-'} · worker ${swMedia ? 'ready' : 'not in charge'} · last good ${lastGood.toFixed(1)}`,
     `state: ready ${audio.readyState} · net ${audio.networkState} · ${audio.paused ? 'paused' : 'playing'}${audio.seeking ? ' · seeking' : ''}${audio.error ? ` · error ${audio.error.code}` : ''}`,
-    `time: ${audio.currentTime.toFixed(1)} of ${Number.isFinite(audio.duration) ? audio.duration.toFixed(1) : audio.duration} · saved ${(t?.position || 0).toFixed(1)}${want ? ` · heading to ${want.t.toFixed(1)} (try ${want.tries})` : ''}`,
+    `time: ${audio.currentTime.toFixed(1)} of ${Number.isFinite(audio.duration) ? audio.duration.toFixed(1) : audio.duration} · saved ${(t?.position || 0).toFixed(1)}${pending ? ` · heading to ${pending.t.toFixed(1)} (try ${pending.tries})` : ''}`,
     `seekable: ${ranges(audio.seekable)}`,
     `buffered: ${ranges(audio.buffered)}`,
     `lock buttons: ${state.settings.lockButtons || 'skip'} · skip ${state.settings.skipBack}/${state.settings.skipFwd}s · speed ${audio.playbackRate}`,
   ].join('\n');
 }
 
-export function restore() {
+export async function restore() {
   bindMediaKeys();
   baseVolume = state.settings.volume ?? 1;
   if (P.volumeSupported) audio.volume = baseVolume;
   const s = state.session;
   P.queue = (s.queue || []).filter((id) => getTrack(id));
   if (s.context?.ids) P.context = { ids: s.context.ids.filter((id) => getTrack(id)), label: s.context.label || 'Library' };
-  if (s.lastId && getTrack(s.lastId)) load(s.lastId, { autoplay: false });
+  await Promise.race([swReady, new Promise((r) => setTimeout(r, 1500))]);
+  if (s.lastId && getTrack(s.lastId) && !P.id) load(s.lastId, { autoplay: false });
 }

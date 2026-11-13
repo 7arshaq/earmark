@@ -4,18 +4,20 @@ import { uid, dayKey, throttle } from './util.js';
 
 // Colour families lifted from the bento reference.
 export const SWATCHES = [
-  { key: 'orange', bg: '#f5841f', ink: '#111111', dim: '#c9640f' },
-  { key: 'sage', bg: '#7e8a6e', ink: '#0e0e0e', dim: '#5d6950' },
-  { key: 'khaki', bg: '#c3af87', ink: '#111111', dim: '#8d7d5c' },
-  { key: 'clay', bg: '#7b5345', ink: '#f3ebe6', dim: '#5c3c31' },
-  { key: 'silver', bg: '#b9b9b4', ink: '#111111', dim: '#8e8e89' },
-  { key: 'stone', bg: '#575757', ink: '#eeeeee', dim: '#3f3f3f' },
-  { key: 'paper', bg: '#e7e7e4', ink: '#111111', dim: '#b8b8b3' },
-  { key: 'navy', bg: '#132146', ink: '#e8ecf6', dim: '#0b1530' },
-  { key: 'denim', bg: '#5d79b3', ink: '#0c1322', dim: '#42598a' },
-  { key: 'pine', bg: '#2f5f58', ink: '#e9f1ee', dim: '#1f423d' },
-  { key: 'ochre', bg: '#d9a53f', ink: '#151005', dim: '#a87b24' },
-  { key: 'plum', bg: '#643349', ink: '#f4e9ee', dim: '#472233' },
+  // Vintage Charm: burnt orange, slate, wheat, midnight violet, ink — and their tints.
+  // (The order matters: saved audio and playlists store their colour as a position here.)
+  { key: 'burnt', bg: '#c44900', ink: '#f7ead2', dim: '#8a3300' },
+  { key: 'slate', bg: '#183a37', ink: '#efd6ac', dim: '#0f2725' },
+  { key: 'wheat', bg: '#efd6ac', ink: '#04151f', dim: '#c9a974' },
+  { key: 'violet', bg: '#432534', ink: '#efd6ac', dim: '#2b1722' },
+  { key: 'sand', bg: '#d8b981', ink: '#04151f', dim: '#b0915a' },
+  { key: 'ink', bg: '#1d4053', ink: '#efd6ac', dim: '#12303f' },
+  { key: 'cream', bg: '#f7ead2', ink: '#04151f', dim: '#d6c09c' },
+  { key: 'teal', bg: '#2a5a6e', ink: '#efd6ac', dim: '#1b3e4d' },
+  { key: 'ember', bg: '#e06a22', ink: '#04151f', dim: '#a84c12' },
+  { key: 'moss', bg: '#2c5c56', ink: '#efd6ac', dim: '#1d413c' },
+  { key: 'tan', bg: '#b8955d', ink: '#04151f', dim: '#8f703e' },
+  { key: 'plum', bg: '#5c3448', ink: '#efd6ac', dim: '#3f2231' },
 ];
 /** The order new audio picks its colour in: warm, cool, earthy in turn, so a library never
  *  sits in one corner of the palette. (Stored colours are indexes into SWATCHES.) */
@@ -23,7 +25,7 @@ const COLOUR_ORDER = [0, 7, 1, 10, 9, 3, 8, 2, 11, 4, 6, 5];
 export const nextColour = (n) => COLOUR_ORDER[n % COLOUR_ORDER.length];
 /** Soft fill for controls sitting on a swatch: darkens light tiles, lightens dark ones. */
 export const swatchSoft = (sw) => (/^#[ef]/i.test(sw.ink) ? 'rgba(255, 255, 255, 0.14)' : 'rgba(0, 0, 0, 0.12)');
-export const MARK_COLORS = ['#f5841f', '#c3af87', '#7e8a6e', '#b2705a', '#5d79b3', '#e7e7e4'];
+export const MARK_COLORS = ['#c44900', '#efd6ac', '#2c5c56', '#8a4a68', '#e06a22', '#8fc1b6'];
 
 export const DEFAULTS = {
   skipBack: 5,

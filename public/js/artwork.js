@@ -42,7 +42,7 @@ export function artworkFor(t) {
   c.width = c.height = S;
   const g = c.getContext('2d');
 
-  g.fillStyle = '#232323';
+  g.fillStyle = '#04151f';
   g.fillRect(0, 0, S, S);
   rr(g, 22, 22, S - 44, S - 44, 28);
   g.fillStyle = sw.bg;

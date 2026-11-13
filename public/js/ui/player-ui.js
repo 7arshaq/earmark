@@ -43,7 +43,7 @@ export function mountPlayer() {
       <button class="mini-btn mini-play press" type="button" data-a="toggle" data-fx="pop" aria-label="Play or pause">${PP}</button>
       <button class="mini-btn press" type="button" data-a="next" data-fx="nudge-r" aria-label="Next audio">${icon('next')}</button>
     </div>
-    <i class="mini-prog" aria-hidden="true"><i id="miProg"></i></i>`;
+    <i class="mini-fill" id="miProg" aria-hidden="true"></i>`;
 
   // Top to bottom = far from the thumb to under it: what it is, what you saved in it,
   // the occasional settings, then the timeline and the transport you touch all the time.
@@ -395,7 +395,7 @@ function renderTime(force = false) {
   const d = player.duration();
   const sec = Math.floor(pos);
   if (!scrub.dragging) scrub.set(pos, d);
-  R.miProg.style.transform = `scaleX(${d ? pos / d : 0})`;
+  R.miProg.style.transform = `translateX(${(d ? Math.min(1, pos / d) : 0) * 100 - 100}%)`;
   if (sec === lastSec && !force) return;
   lastSec = sec;
   R.miTime.textContent = `${fmtTime(pos)} / ${fmtTime(d)}`;
@@ -445,7 +445,7 @@ function loop() {
   const frame = () => {
     const d = player.duration();
     const pos = player.time();
-    R.miProg.style.transform = `scaleX(${d ? pos / d : 0})`;
+    R.miProg.style.transform = `translateX(${(d ? Math.min(1, pos / d) : 0) * 100 - 100}%)`;
     if (isOpen && !scrub.dragging) scrub.set(pos, d);
     if (player.isPlaying()) rafId = requestAnimationFrame(frame);
   };

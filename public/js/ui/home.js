@@ -191,7 +191,7 @@ export function mountHome(root) {
 
     <section class="tile t-donut" id="donutTile" role="button" tabindex="0" style="--i:7">
       <svg class="dn-svg" viewBox="0 0 120 120" aria-hidden="true">
-        <defs><linearGradient id="dnGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e9e9e7"/><stop offset="1" stop-color="#b9b9b6"/></linearGradient></defs>
+        <defs><linearGradient id="dnGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f7ead2"/><stop offset="1" stop-color="#d8b981"/></linearGradient></defs>
         <circle class="dn-track" cx="60" cy="60" r="41"/>
         <circle class="dn-seg" id="dnSeg" cx="60" cy="60" r="41"/>
       </svg>

@@ -1,8 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-    <rect x="0" y="0" width="512" height="512" rx="112" fill="#232323"/>
-    <rect x="56" y="56" width="400" height="400" rx="56" fill="#f5841f"/>
-    <rect x="104" y="360" width="304" height="44" rx="10" fill="#c9640f"/>
-    <rect x="104" y="360" width="184" height="44" rx="10" fill="#0e0e0e"/>
-    <g transform="translate(156 96) scale(2) rotate(180 50 60)" fill="none" stroke="#0e0e0e" stroke-width="13" stroke-linecap="butt">
-     <path d="M50 116V18"/><path d="M9 58C29 50 44 36 50 11"/><path d="M91 58C71 50 56 36 50 11"/></g>
+    <rect width="512" height="512" rx="112" fill="#04151f"/>
+    <circle cx="240" cy="272" r="178" fill="#183a37"/>
+    <circle cx="240" cy="272" r="89.0" fill="none" stroke="#efd6ac" stroke-opacity="0.10" stroke-width="3.5"/><circle cx="240" cy="272" r="101.5" fill="none" stroke="#efd6ac" stroke-opacity="0.16" stroke-width="3.5"/><circle cx="240" cy="272" r="113.9" fill="none" stroke="#efd6ac" stroke-opacity="0.10" stroke-width="3.5"/><circle cx="240" cy="272" r="126.4" fill="none" stroke="#efd6ac" stroke-opacity="0.16" stroke-width="3.5"/><circle cx="240" cy="272" r="138.8" fill="none" stroke="#efd6ac" stroke-opacity="0.10" stroke-width="3.5"/><circle cx="240" cy="272" r="151.3" fill="none" stroke="#efd6ac" stroke-opacity="0.16" stroke-width="3.5"/><circle cx="240" cy="272" r="163.8" fill="none" stroke="#efd6ac" stroke-opacity="0.10" stroke-width="3.5"/>
+    <path d="M240 272 L312.71076447738 109.52801863362725 A178 178 0 0 1 391.749364926592 178.96167325034264 Z" fill="#efd6ac" fill-opacity="0.07"/>
+    <circle cx="240" cy="272" r="64.08" fill="#c44900"/>
+    <circle cx="240" cy="272" r="64.08" fill="none" stroke="#04151f" stroke-opacity="0.25" stroke-width="4"/>
+    <circle cx="240" cy="272" r="13.35" fill="#04151f"/>
+    <circle cx="390" cy="104" r="24" fill="#efd6ac"/>
+    <circle cx="390" cy="104" r="9" fill="#04151f"/>
+    <path d="M390 104 L394 254 L298 294" fill="none" stroke="#efd6ac" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="274" y="278" width="38" height="26" rx="6" transform="rotate(-38 293 291)" fill="#efd6ac"/>
   </svg>
