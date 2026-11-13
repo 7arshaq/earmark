@@ -52,8 +52,8 @@ export class Roller {
 }
 
 /* ───────────── views grow out of the thing that opened them ─────────────
-   A surface in the source's colour travels from the button to the stage, a soft shadow
-   travelling underneath so it reads as lifting off the page; the real view fades in on top.
+   A surface in the source's colour travels from the button to the stage.
+   The real view fades in on top.
    The source can sit outside the stage (the bottom nav row), so the travelling parts are
    viewport-fixed and the view itself is clipped to the part of the path inside the stage. */
 
@@ -94,17 +94,12 @@ function clipKeyframes(src, box, rSrc, rBox) {
       clipPath: insetFor({ top: mix(src.top, box.top, p), left: mix(src.left, box.left, p), right: mix(src.right, box.right, p), bottom: mix(src.bottom, box.bottom, p) }, box, mix(rSrc, rBox, p)),
     }));
 }
-const shadowFrom = (r, box) => `translate(${r.left - box.left}px, ${r.top - box.top}px) scale(${r.width / box.width}, ${r.height / box.height})`;
-
-function ghosts(el, box) {
+function ghosts(el) {
   const surf = document.createElement('i');
-  const shade = document.createElement('i');
   surf.className = 'xp-surf';
-  shade.className = 'xp-shadow';
-  surf.style.zIndex = shade.style.zIndex = el.style.zIndex || '20';
-  Object.assign(shade.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
-  el.before(shade, surf);
-  return { surf, shade };
+  surf.style.zIndex = el.style.zIndex || '20';
+  el.before(surf);
+  return { surf };
 }
 
 export function expandFrom(el, fromEl, box, radius = 10) {
@@ -116,7 +111,7 @@ export function expandFrom(el, fromEl, box, radius = 10) {
   const bg = getComputedStyle(el).backgroundColor;
   const fromBg = solid(cs.backgroundColor) || bg;
   const fromR = parseFloat(cs.borderTopLeftRadius) || radius;
-  const { surf, shade } = ghosts(el, box);
+  const { surf } = ghosts(el);
   const opts = { duration: 540, easing: EASE.drawer, fill: 'both' };
   surf.animate(
     [
@@ -126,18 +121,10 @@ export function expandFrom(el, fromEl, box, radius = 10) {
     ],
     opts,
   );
-  shade.animate(
-    [
-      { transform: shadowFrom(from, box), opacity: 0.15 },
-      { transform: 'translate(0px, 0px) scale(1, 1)', opacity: 1 },
-    ],
-    opts,
-  );
   const clip = el.animate(clipKeyframes(from, box, fromR, radius), opts);
   const done = el.animate([{ opacity: 0 }, { opacity: 1, offset: 0.42 }, { opacity: 1 }], { duration: 540, easing: 'ease-out', fill: 'backwards' }).finished;
   const clean = () => {
     surf.remove();
-    shade.remove();
     clip.cancel();
   };
   return done.then(clean, clean);
@@ -156,20 +143,13 @@ export function collapseTo(el, toEl, box, radius = 10) {
   const bg = getComputedStyle(el).backgroundColor;
   const toBg = solid(cs.backgroundColor) || bg;
   const toR = parseFloat(cs.borderTopLeftRadius) || radius;
-  const { surf, shade } = ghosts(el, box);
+  const { surf } = ghosts(el);
   const opts = { duration: 400, easing: EASE.drawer, fill: 'both' };
   surf.animate(
     [
       { clipPath: viewInset(box, radius), backgroundColor: bg },
       { backgroundColor: bg, offset: 0.5 },
       { clipPath: viewInset(to, toR), backgroundColor: toBg },
-    ],
-    opts,
-  );
-  shade.animate(
-    [
-      { transform: 'translate(0px, 0px) scale(1, 1)', opacity: 1 },
-      { transform: shadowFrom(to, box), opacity: 0 },
     ],
     opts,
   );
@@ -182,7 +162,6 @@ export function collapseTo(el, toEl, box, radius = 10) {
   const done = el.animate([{ opacity: 1 }, { opacity: 0, offset: 0.55 }, { opacity: 0 }], { duration: 400, easing: 'ease-out', fill: 'forwards' }).finished;
   const clean = () => {
     surf.remove();
-    shade.remove();
   };
   return done.then(clean, clean);
 }
